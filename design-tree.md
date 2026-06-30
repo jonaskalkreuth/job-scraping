@@ -18,8 +18,8 @@
 - Job-listing skills-analysis scraper
   - M1 — Adzuna spine (thin slice: fetch → analyze one source)
     - [x] **Project scaffold** — git init, .gitignore (ignore .env + raw data, commit a small sample), package layout, requirements.txt, venv, .env/.env.example, config for role queries + filters; GitHub repo created when M1 ships — _why leaf: pure setup, nothing structural left_  ✅ flat `jobskills/` pkg, venv + pinned reqs installed, `config.py` (dotenv secrets + settings) imports clean, paths `__file__`-anchored, credential guard verified
-    - [ ] **Adzuna fetcher** — query API per role, paginate, rate-limit + UA + retry, return raw JSON — _why leaf: API documented, behavior known_  (needs scaffold/.env for API key)  _Note: remote filtering moved OUT of the fetcher → derived as a tag in clean→SQLite (step 5). Why: Adzuna has no reliable remote flag, and filtering at fetch time would bake a crude guess into the raw store, breaking the raw/clean reparse decision. Fetcher queries broadly (`what=<role>`); remote is re-derivable from posting text downstream._
-    - [ ] **Raw store (JSONL)** — append each raw response to data/raw/*.jsonl — _why leaf: append-only write_  (needs fetcher)
+    - [x] **Adzuna fetcher** — query API per role, paginate, rate-limit + UA + retry, return raw JSON — _why leaf: API documented, behavior known_  ✅ `fetch_adzuna.py` returns `(role, page, raw_json)` triples; smoke test live (data analyst: 1895 available)  _Note: remote filtering moved OUT of the fetcher → derived as a tag in clean→SQLite (step 5). Why: Adzuna has no reliable remote flag, and filtering at fetch time would bake a crude guess into the raw store, breaking the raw/clean reparse decision. Fetcher queries broadly (`what=<role>`); remote is re-derivable from posting text downstream._
+    - [x] **Raw store (JSONL)** — append each raw response to data/raw/*.jsonl — _why leaf: append-only write_  ✅ `store_raw.py` unnests pages → one posting/line into per-run `data/raw/adzuna_<UTC>.jsonl`; first real run wrote 1043 postings across 5 roles, all valid JSONL; 20-line committed sample in `data/sample/`
     - [ ] **Clean → SQLite** — parse raw JSON to flat row schema, build dedup key, derive remote tag from posting text, UNIQUE insert — _why leaf: schema small/known_  (needs raw store)
     - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode/statistics) carry no loose aliases for case-sensitive matching in step 6
     - [ ] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  (needs clean SQLite + taxonomy)
@@ -62,13 +62,19 @@
 - **Aliases** → moderate: include common safe abbreviations (`postgres`, `sklearn`, `js`, `aws`); stay conservative on ambiguous short forms. Short/ambiguous skills (`R`, `C`, `SAS`, `Go`, `stats`) require case-sensitive + word-boundary matching in extraction (step 6). _Why: matches real posting language without opening false-positive floodgates; widen once real Adzuna text is seen._
 - **Loader** → `load_skills()` returns a DataFrame; validates no duplicate names, no alias collisions (same alias under two skills), every record has a non-empty category — raises a clear error naming the offender. _Why: general downstream-friendly form (step 6 builds its own index from it); malformed file fails at load, not mid-analysis._
 
+### Step 4 — Raw store (JSONL)
+- **Granularity** → one line per *posting*, not per API page. Each line `{role, page, fetched_at, posting: <full nested Adzuna dict>}`; page envelope (`count`/paging) dropped. _Why: store records at the grain consumers use — step 5 wants one row per posting, so unnest once at write time instead of postponing the page-cracking loop into the clean/dedup logic. `posting` kept whole so "raw" stays genuinely raw._
+- **File layout** → per-run timestamped file `data/raw/adzuna_<UTC>.jsonl` (colon-free, lexically sortable); downstream globs `data/raw/*.jsonl`. _Why: a fresh file per run keeps each snapshot separate (no re-run doubling) and lets Phase B just accumulate dated snapshots — the "weekly monitoring is a small add" decision. Time is the axis you can't recover from inside a record; role already is a field._
+- **Write** → stdlib `json.dumps(record, ensure_ascii=False)` + `"\n"` per line, append mode. _Why: JSONL (one object/line) is append-able and streamable, unlike one big JSON array; `ensure_ascii=False` keeps accented names readable._
+- **Sample** → first ~20 lines of a real run copied to `data/sample/adzuna_sample.jsonl` (raw gitignored, sample committed). _Why: repo stays runnable/legible without committing scraped data; real slice reads better than a fixture in a portfolio._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
 1. [x] Project scaffold
 2. [x] Skills taxonomy seed _(no deps — can run alongside scaffold)_
-3. [ ] Adzuna fetcher
-4. [ ] Raw store (JSONL)
+3. [x] Adzuna fetcher
+4. [x] Raw store (JSONL)
 5. [ ] Clean → SQLite
 6. [ ] Dictionary skill extraction
 7. [ ] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
