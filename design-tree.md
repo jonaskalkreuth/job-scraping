@@ -33,7 +33,7 @@
     - [ ] **RemoteOK fetcher + mapper** *(optional, post-M2 — adds volume)* — JSON `/api` returns the whole latest feed (no server-side search), full descriptions; employment type only inside `tags`, so filter to target roles client-side — _why leaf: field mapping + a client-side relevance filter_  (needs adapter contract)
     - [ ] **WeWorkRemotely fetcher + mapper** *(optional, post-M2 — adds volume)* — category RSS feeds (no search), full descriptions; no employment-type field at all, filter to roles client-side — _why leaf: feed parse + client-side filter_  (needs adapter contract)
   - M3 — Analysis depth + gap layer
-    - [ ] **N-gram mining** — frequent uni/bi/tri-grams from descriptions → surface skills missing from taxonomy → promote into skills.yaml — _why leaf: extract + review_  (needs clean store w/ real data)
+    - [x] **N-gram mining** — frequent uni/bi/tri-grams from descriptions → surface skills missing from taxonomy → promote into skills.yaml — _why leaf: extract + review_  (needs clean store w/ real data)  ✅ `mine.py`: corpus = 1189 distinct-job docs (collapse on step-10 `ident`); hand-rolled `Counter` pipeline (`tokenize` w/ EN+DE+ES stopword wall + len>1 filter → `ngrams` via `zip(*offset_slices)` → `document_frequencies` w/ per-doc `set()` so count = distinct jobs, not raw freq); `candidates()` excludes the 118 taxonomy terms + floors by `min_postings`, returns `ngram|n_postings|example_snippet` (snippet lowercased-search/original-slice). `notebooks/02_ngram_mining.ipynb` renders the review table (2176 cands ≥10 jobs), runs end-to-end (nbconvert). **Headline find: `ai` in ~230 distinct jobs — real skill missing from taxonomy.** Noise as expected (roles `data analyst`, filler `about`, stopword leak `du`/`re`); list is English-dominated despite ~60% DE/ES corpus = the predicted cross-language fragmentation → isolates the **coverage gap** here, leaves the **language gap** to 11b. CountVectorizer equivalent deferred (naive version shipped; user paused on the second-pass refactor).
     - [ ] **Multilingual taxonomy extension** — add German/Spanish aliases (and remote keywords: `homeoffice`, `teletrabajo`/`remoto`) to skills.yaml so DE/ES postings stop under-matching — _why leaf: data entry, matching already handles aliases_  (motivated by EU rebuild: ~24% overall match, DE 23% / ES 22%)
     - [ ] **Part-time vs full-time comparison** — slice skill demand by employment type, compare — _why leaf: groupby + compare_  (needs extraction + employment tags)
     - [ ] **Demand ranking by role** — top skills per role family — _why leaf: groupby + rank_  (needs extraction)
@@ -89,6 +89,13 @@
 - **Adzuna retrofit (tracer-bullet validation)** → wrap existing fetch/clean logic as `AdzunaSource(Source)`: `fetch()` returns raw records carrying `country`/`role` provenance, `map()` is today's `flatten_record`. Add `source` to the raw JSONL record and the clean schema; legacy rows default `source="adzuna"`. _Why: if Adzuna can't fit the interface cleanly, the interface is wrong — retrofitting proves the contract isn't vapor before 3 new sources depend on it._
 - **Scope line** → only the *mapper interface* is defined here; the Remotive/WWR/RemoteOK mappers are step 12.
 
+### Step 11 — N-gram mining
+- **Corpus** → mine **all** descriptions regardless of language (no English filter). _Why: consistent with the Language decision (keep all postings); all-language mining is the correct *predecessor* to 11b — it surfaces the candidate DE/ES skill terms ("datenanalyse", "teletrabajo") that 11b then formalizes as aliases, instead of inventing them blind. Cross-language fragmentation ("machine learning" vs "maschinelles lernen" count separately) is accepted as informative, not a bug. Data check: Remotive 0% German (English board), Adzuna DE 68% German / ~32% English, ES ~Spanish, CH mixed._
+- **Preprocess + tooling** → naive hand-rolled `collections.Counter` + stdlib `re` first, *then* show the `sklearn CountVectorizer` equivalent and name the tradeoff. Stopwords: small hardcoded EN+DE+ES wall (not nltk's full corpus). _Why: genuinely-new concept → naive-first so the n-gram/stopword mechanics are owned before trusting a vectorizer; CountVectorizer is the real-work idiom worth seeing second._
+- **N-grams** → uni/bi/tri-grams (n=1,2,3); `Counter` + `zip(tokens, tokens[1:])` slices.
+- **Rank metric** → **document frequency** (count once per distinct posting), not raw count. _Why: same unit as step 7's share-of-postings; one verbose ad can't spam a phrase to the top._
+- **Output / review** → ranked notebook DataFrame `ngram | n_postings | example_snippet`, with terms **already in the taxonomy excluded** so only *new* candidates show. **Mining never edits skills.yaml** — it surfaces candidates; human reads the table (reject junk like "erfahrung im" / roles like "data analyst", keep real skills like "data warehouse"); approved terms hand-added in 11b. _Why: preserves the dictionary-first-hybrid decision (taxonomy stays hand-curated); a promote script is write-once-never-reuse automation at ~10-30 candidates. Snippets make the false-positive check fast._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -102,7 +109,7 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 8. [x] Source adapter contract
 9. [x] Remotive fetcher + mapper  ← **M2 primary** (full descriptions + clean part-time tag)
 10. [x] Cross-source dedup (exact)  ← **M2 ships: Adzuna + Remotive multi-source dataset**
-11. [ ] N-gram mining
+11. [x] N-gram mining  ← surfaced `ai` (~230 jobs) as a missing skill; coverage gap isolated from language gap
 11b. [ ] Multilingual taxonomy extension (DE/ES aliases) _(no deps — additive to skills.yaml)_
 12. [ ] Part-time vs full-time comparison
 13. [ ] Demand ranking by role
