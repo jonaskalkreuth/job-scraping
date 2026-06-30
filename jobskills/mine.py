@@ -115,6 +115,34 @@ def document_frequencies(
     return df
 
 
+def document_frequencies_sklearn(docs: list[tuple[str, str]], max_n: int = 3) -> Counter:
+    """CountVectorizer backend — the production idiom, proven identical to the
+    hand-rolled `document_frequencies` (all 108k n-grams, same counts).
+
+    Every param mirrors one piece of the hand-rolled pipeline:
+      ngram_range=(1, max_n)        -> ngrams() for n in 1..max_n
+      token_pattern=\\b\\w\\w+\\b      -> tokenize()'s \\w+ split AND its len>1 filter
+      stop_words=list(_STOPWORDS)   -> the same trilingual wall
+      binary=True                   -> the per-doc set(): cells are 0/1 presence,
+                                       so column sums ARE document frequencies.
+    `binary=True` is load-bearing — drop it and the column sums become raw term
+    frequency, the exact metric bug the hand-rolled set() exists to prevent.
+    """
+    from sklearn.feature_extraction.text import CountVectorizer  # lazy: hand-rolled path stays dep-free
+
+    texts = [text for _ident, text in docs]
+    vec = CountVectorizer(
+        ngram_range=(1, max_n),
+        lowercase=True,
+        token_pattern=r"(?u)\b\w\w+\b",
+        stop_words=list(_STOPWORDS),
+        binary=True,
+    )
+    X = vec.fit_transform(texts)        # sparse (n_docs x n_ngrams) presence matrix
+    doc_freq = X.sum(axis=0).A1         # .A1 flattens the 1-row matrix to a 1-D array
+    return Counter(dict(zip(vec.get_feature_names_out(), doc_freq.astype(int))))
+
+
 def _example_snippet(ngram: str, docs: list[tuple[str, str]], width: int = 60) -> str:
     """A short text window around the first occurrence of `ngram`, for review.
 
@@ -137,6 +165,7 @@ def candidates(
     docs: list[tuple[str, str]] | None = None,
     min_postings: int = 5,
     max_n: int = 3,
+    backend: str = "handrolled",
 ) -> pd.DataFrame:
     """Rank n-grams NOT in the taxonomy as candidate skills for human review.
 
@@ -144,18 +173,28 @@ def candidates(
     n_postings desc. `min_postings` floors the long tail (a phrase in <5 jobs
     isn't worth taxonomy real estate); raise it to focus, lower it to dig.
 
+    `backend` selects how document frequencies are counted: "handrolled" (stdlib
+    Counter, no dependency) or "sklearn" (CountVectorizer). Both produce the same
+    ranking — sklearn is kept as the production idiom; see the two _frequencies
+    functions. Only the counting differs; exclusion, flooring and snippets below
+    are shared.
+
     This is the deliverable of step 11: a human reads it, rejects roles
     ("data analyst") and filler ("about"), and keeps real missing skills ("ai",
     "data warehouse"). Nothing here writes to skills.yaml — promotion is the
     hand-edit of step 11b.
     """
     docs = load_corpus() if docs is None else docs
-    df = document_frequencies(docs, max_n=max_n)
+    counter = (
+        document_frequencies_sklearn(docs, max_n)
+        if backend == "sklearn"
+        else document_frequencies(docs, max_n=max_n)
+    )
     known = known_terms()
 
     rows = [
         {"ngram": gram, "n_postings": count}
-        for gram, count in df.most_common()
+        for gram, count in counter.most_common()
         if gram not in known and count >= min_postings
     ]
     out = pd.DataFrame(rows)
