@@ -12,7 +12,37 @@ field here and every consumer follows. In M1 this contract was a hand-kept list
 in clean.py that could silently drift from the row dicts.
 """
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
+import re
+
+
+# --- Cross-source dedup key (step 10) ---------------------------------------
+# A job posted on two boards shares no id and no url across sources, so the only
+# exact key that crosses sources is normalized company+title. We don't enforce
+# it as a UNIQUE constraint (that would silently drop two genuinely different
+# roles at one firm, and be load-order dependent) — we store it as a derived
+# column and let analysis collapse on COUNT(DISTINCT dedup_key).
+_PUNCT_RE = re.compile(r"[^\w\s]")  # anything not word-char or whitespace
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm(s: str) -> str:
+    """Lowercase, drop punctuation (→ space, so 'a/b' stays two tokens), collapse ws."""
+    return _WS_RE.sub(" ", _PUNCT_RE.sub(" ", s.lower())).strip()
+
+
+def _dedup_key(company: str | None, title: str | None) -> str | None:
+    """`norm(company)|norm(title)`, or None if either side is missing/empty.
+
+    None (not a shared empty key) when company or title is absent, so company-less
+    postings never collapse into one bucket — they stay individually counted.
+    """
+    if not company or not title:
+        return None
+    c, t = _norm(company), _norm(title)
+    if not c or not t:  # normalized away to nothing (e.g. title was just "---")
+        return None
+    return f"{c}|{t}"
 
 
 # frozen=True: a mapped posting is a value, not a mutable buffer — once a source
@@ -25,7 +55,7 @@ class NormalizedPosting:
     Field notes where the name isn't self-evident:
       source        — provenance: which source produced this row ("adzuna", ...).
       id            — the source's own posting id (unique *within* that source;
-                      cross-source collisions are step 13's problem, not ours).
+                      cross-source identity is dedup_key's job, see below).
       role_query    — the query string that surfaced this posting, where the
                       source is query-driven (Adzuna). Boards that list everything
                       leave it None.
@@ -34,6 +64,9 @@ class NormalizedPosting:
                       the M1 `country` column, renamed — "country" was meaningless
                       for a remote board.
       remote        — derived work-mode tag: remote/hybrid/onsite/unknown.
+      dedup_key     — derived cross-source identity (norm company+title); see
+                      _dedup_key. init=False: every mapper builds it for free,
+                      so no source has to set it. None when company/title missing.
     """
 
     source: str
@@ -54,6 +87,12 @@ class NormalizedPosting:
     created: str | None
     remote: str
     fetched_at: str | None
+    dedup_key: str | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        # frozen blocks plain assignment; object.__setattr__ is the sanctioned
+        # way to set a derived field during construction.
+        object.__setattr__(self, "dedup_key", _dedup_key(self.company, self.title))
 
 
 # The single source of column order. Built from the dataclass once at import so

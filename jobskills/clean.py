@@ -32,7 +32,8 @@ def _column_ddl() -> str:
     defs = [f"{c} {'REAL' if c in numeric else 'TEXT'}" for c in COLUMNS]
     # id is the natural key within a source: UNIQUE makes INSERT OR IGNORE a
     # no-op on a re-seen posting, so re-runs and overlapping role queries never
-    # double-count. (Cross-source id collisions are step 13's problem.)
+    # double-count. Cross-source identity (same job on two boards) is a different
+    # problem, solved at read-time via the derived dedup_key column (step 10).
     defs[COLUMNS.index("id")] += " PRIMARY KEY"
     return ",\n    ".join(defs)
 
