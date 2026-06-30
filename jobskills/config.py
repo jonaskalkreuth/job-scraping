@@ -65,3 +65,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 SAMPLE_DIR = DATA_DIR / "sample"
 SQLITE_PATH = DATA_DIR / "jobs.db"
+
+# Curated skills taxonomy. Lives inside the package (versioned with the code,
+# not scraped), so it's anchored to PACKAGE_DIR rather than DATA_DIR.
+SKILLS_PATH = PACKAGE_DIR / "skills.yaml"

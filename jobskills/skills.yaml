@@ -1,0 +1,256 @@
+# Skills taxonomy — hand-curated seed for dictionary-based extraction.
+#
+# Schema: a flat list under `skills:`. Each record is self-describing:
+#   - name:     canonical skill label (lower-case; what charts/reports show)
+#   - category: one of the buckets below (used for grouping demand by area)
+#   - aliases:  other spellings/abbreviations that should count as a hit
+#
+# Alias policy is MODERATE: include common, *safe* abbreviations recruiters
+# actually write. Stay conservative on ambiguous short forms — single-letter
+# or dictionary-word skills (r, c, sas, go, stats) carry NO loose aliases and
+# must be matched case-sensitively + word-bounded in extraction (step 6).
+#
+# Scope: hard tech + methods/concepts. No soft skills (they're everywhere and
+# low-signal; promote any interesting ones later via n-gram mining, step 14).
+
+skills:
+  # --- languages ---------------------------------------------------------
+  - name: python
+    category: languages
+    aliases: [py]
+  - name: sql
+    category: languages
+    aliases: []
+  - name: r
+    category: languages
+    aliases: []            # single letter — case-sensitive, no aliases
+  - name: java
+    category: languages
+    aliases: []
+  - name: scala
+    category: languages
+    aliases: []
+  - name: javascript
+    category: languages
+    aliases: [js]
+  - name: go
+    category: languages
+    aliases: [golang]      # bare "go" is ambiguous; "golang" is the safe form
+  - name: sas
+    category: languages
+    aliases: []            # also a vendor word — case-sensitive in extraction
+
+  # --- libraries ---------------------------------------------------------
+  - name: pandas
+    category: libraries
+    aliases: []
+  - name: numpy
+    category: libraries
+    aliases: []
+  - name: scikit-learn
+    category: libraries
+    aliases: [sklearn, scikit learn]
+  - name: matplotlib
+    category: libraries
+    aliases: []
+  - name: seaborn
+    category: libraries
+    aliases: []
+  - name: plotly
+    category: libraries
+    aliases: []
+  - name: tensorflow
+    category: libraries
+    aliases: [tf]
+  - name: pytorch
+    category: libraries
+    aliases: [torch]
+  - name: keras
+    category: libraries
+    aliases: []
+  - name: statsmodels
+    category: libraries
+    aliases: []
+  - name: scipy
+    category: libraries
+    aliases: []
+  - name: xgboost
+    category: libraries
+    aliases: [xgb]
+  - name: nltk
+    category: libraries
+    aliases: []
+  - name: spacy
+    category: libraries
+    aliases: []
+  - name: ggplot2
+    category: libraries
+    aliases: [ggplot]
+
+  # --- databases ---------------------------------------------------------
+  - name: postgresql
+    category: databases
+    aliases: [postgres, psql]
+  - name: mysql
+    category: databases
+    aliases: []
+  - name: sql server
+    category: databases
+    aliases: [mssql, tsql, t-sql]
+  - name: oracle
+    category: databases
+    aliases: []
+  - name: sqlite
+    category: databases
+    aliases: []
+  - name: mongodb
+    category: databases
+    aliases: [mongo]
+  - name: redis
+    category: databases
+    aliases: []
+  - name: snowflake
+    category: databases
+    aliases: []
+  - name: bigquery
+    category: databases
+    aliases: [big query]
+  - name: redshift
+    category: databases
+    aliases: []
+
+  # --- bi_tools ----------------------------------------------------------
+  - name: tableau
+    category: bi_tools
+    aliases: []
+  - name: power bi
+    category: bi_tools
+    aliases: [powerbi]
+  - name: looker
+    category: bi_tools
+    aliases: []
+  - name: qlik
+    category: bi_tools
+    aliases: [qlikview, qlik sense]
+  - name: excel
+    category: bi_tools
+    aliases: []
+  - name: google data studio
+    category: bi_tools
+    aliases: [data studio, looker studio]
+  - name: mode
+    category: bi_tools
+    aliases: []            # common word — case-sensitive guard in extraction
+  - name: metabase
+    category: bi_tools
+    aliases: []
+
+  # --- cloud -------------------------------------------------------------
+  - name: aws
+    category: cloud
+    aliases: [amazon web services]
+  - name: gcp
+    category: cloud
+    aliases: [google cloud, google cloud platform]
+  - name: azure
+    category: cloud
+    aliases: [microsoft azure]
+  - name: databricks
+    category: cloud
+    aliases: []
+  - name: docker
+    category: cloud
+    aliases: []
+  - name: kubernetes
+    category: cloud
+    aliases: [k8s]
+
+  # --- data_eng ----------------------------------------------------------
+  - name: spark
+    category: data_eng
+    aliases: [pyspark, apache spark]
+  - name: hadoop
+    category: data_eng
+    aliases: []
+  - name: airflow
+    category: data_eng
+    aliases: [apache airflow]
+  - name: dbt
+    category: data_eng
+    aliases: []
+  - name: kafka
+    category: data_eng
+    aliases: [apache kafka]
+  - name: hive
+    category: data_eng
+    aliases: []
+  - name: flink
+    category: data_eng
+    aliases: []
+  - name: etl
+    category: data_eng
+    aliases: [elt]
+  - name: ssis
+    category: data_eng
+    aliases: []
+  - name: informatica
+    category: data_eng
+    aliases: []
+
+  # --- methods -----------------------------------------------------------
+  - name: machine learning
+    category: methods
+    aliases: [ml]
+  - name: deep learning
+    category: methods
+    aliases: []            # "dl" too ambiguous to include
+  - name: statistics
+    category: methods
+    aliases: []            # "stats" ambiguous — handle case-by-case later
+  - name: a/b testing
+    category: methods
+    aliases: [ab testing, split testing]
+  - name: data visualization
+    category: methods
+    aliases: [data viz, dataviz, data visualisation]
+  - name: regression
+    category: methods
+    aliases: []
+  - name: classification
+    category: methods
+    aliases: []
+  - name: clustering
+    category: methods
+    aliases: []
+  - name: nlp
+    category: methods
+    aliases: [natural language processing]
+  - name: time series
+    category: methods
+    aliases: [time-series]
+  - name: forecasting
+    category: methods
+    aliases: []
+  - name: feature engineering
+    category: methods
+    aliases: []
+  - name: experimental design
+    category: methods
+    aliases: [design of experiments, doe]
+
+  # --- version_control ---------------------------------------------------
+  - name: git
+    category: version_control
+    aliases: []
+  - name: github
+    category: version_control
+    aliases: []
+  - name: gitlab
+    category: version_control
+    aliases: []
+  - name: bitbucket
+    category: version_control
+    aliases: []
+  - name: ci/cd
+    category: version_control
+    aliases: [cicd, continuous integration]

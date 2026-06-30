@@ -21,7 +21,7 @@
     - [ ] **Adzuna fetcher** — query API per role, remote filter, paginate, rate-limit + UA + retry, return raw JSON — _why leaf: API documented, behavior known_  (needs scaffold/.env for API key)
     - [ ] **Raw store (JSONL)** — append each raw response to data/raw/*.jsonl — _why leaf: append-only write_  (needs fetcher)
     - [ ] **Clean → SQLite** — parse raw JSON to flat row schema, build dedup key, UNIQUE insert — _why leaf: schema small/known_  (needs raw store)
-    - [ ] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_
+    - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode/statistics) carry no loose aliases for case-sensitive matching in step 6
     - [ ] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  (needs clean SQLite + taxonomy)
     - [ ] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  (needs extraction)
   - M2 — Add remaining sources
@@ -56,11 +56,17 @@
 - **Config** → split: `.env` for secrets (Adzuna keys) via `python-dotenv` + `config.py` Python module for role queries/filters. _Why: secrets out of git; settings as code (autocomplete, computed values)._
 - **Git** → `git init` at package root; `.gitignore` excludes `.env`, `data/raw/`, `data/*.db`, `venv/`, `__pycache__/`, checkpoints; commit a small sample under `data/sample/`; `.env.example` committed; GitHub repo created when M1 ships.
 
+### Step 2 — Skills taxonomy seed
+- **Schema** → flat list of records under a top-level `skills:` key, each `{name, category, aliases}`. _Why: self-describing rows map straight to a DataFrame (`pd.json_normalize`) — the shape everything downstream lives in; trivial to add fields later._
+- **Scope** → hard tech + methods/concepts (~74 skills); categories: languages, libraries, databases, bi_tools, cloud, data_eng, methods, version_control. No soft skills. _Why: yields an actionable "learn-next" list; soft-skill keywords are everywhere and low-discriminating (would swamp counts). Discovered soft skills can be promoted later via n-gram mining (step 14)._
+- **Aliases** → moderate: include common safe abbreviations (`postgres`, `sklearn`, `js`, `aws`); stay conservative on ambiguous short forms. Short/ambiguous skills (`R`, `C`, `SAS`, `Go`, `stats`) require case-sensitive + word-boundary matching in extraction (step 6). _Why: matches real posting language without opening false-positive floodgates; widen once real Adzuna text is seen._
+- **Loader** → `load_skills()` returns a DataFrame; validates no duplicate names, no alias collisions (same alias under two skills), every record has a non-empty category — raises a clear error naming the offender. _Why: general downstream-friendly form (step 6 builds its own index from it); malformed file fails at load, not mid-analysis._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
 1. [x] Project scaffold
-2. [ ] Skills taxonomy seed _(no deps — can run alongside scaffold)_
+2. [x] Skills taxonomy seed _(no deps — can run alongside scaffold)_
 3. [ ] Adzuna fetcher
 4. [ ] Raw store (JSONL)
 5. [ ] Clean → SQLite
