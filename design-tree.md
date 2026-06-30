@@ -20,7 +20,7 @@
     - [x] **Project scaffold** — git init, .gitignore (ignore .env + raw data, commit a small sample), package layout, requirements.txt, venv, .env/.env.example, config for role queries + filters; GitHub repo created when M1 ships — _why leaf: pure setup, nothing structural left_  ✅ flat `jobskills/` pkg, venv + pinned reqs installed, `config.py` (dotenv secrets + settings) imports clean, paths `__file__`-anchored, credential guard verified
     - [x] **Adzuna fetcher** — query API per role, paginate, rate-limit + UA + retry, return raw JSON — _why leaf: API documented, behavior known_  ✅ `fetch_adzuna.py` returns `(role, page, raw_json)` triples; smoke test live (data analyst: 1895 available)  _Note: remote filtering moved OUT of the fetcher → derived as a tag in clean→SQLite (step 5). Why: Adzuna has no reliable remote flag, and filtering at fetch time would bake a crude guess into the raw store, breaking the raw/clean reparse decision. Fetcher queries broadly (`what=<role>`); remote is re-derivable from posting text downstream._
     - [x] **Raw store (JSONL)** — append each raw response to data/raw/*.jsonl — _why leaf: append-only write_  ✅ `store_raw.py` unnests pages → one posting/line into per-run `data/raw/adzuna_<UTC>.jsonl`; first real run wrote 1043 postings across 5 roles, all valid JSONL; 20-line committed sample in `data/sample/`
-    - [ ] **Clean → SQLite** — parse raw JSON to flat row schema, build dedup key, derive remote tag from posting text, UNIQUE insert — _why leaf: schema small/known_  (needs raw store)
+    - [x] **Clean → SQLite** — parse raw JSON to flat row schema, build dedup key, derive remote tag from posting text, UNIQUE insert — _why leaf: schema small/known_  ✅ `clean.py` flattens raw JSONL → `jobs` table in `data/jobs.db`; `UNIQUE(id)` + `INSERT OR IGNORE` is idempotent (1043 read → 996 inserted, 47 intra-run dupes dropped; re-run inserts 0). Remote derived 4-state: unknown 723 / hybrid 180 / remote 52 / onsite 41. 16-col flat schema in `COLUMNS`
     - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode/statistics) carry no loose aliases for case-sensitive matching in step 6
     - [ ] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  (needs clean SQLite + taxonomy)
     - [ ] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  (needs extraction)
@@ -68,6 +68,12 @@
 - **Write** → stdlib `json.dumps(record, ensure_ascii=False)` + `"\n"` per line, append mode. _Why: JSONL (one object/line) is append-able and streamable, unlike one big JSON array; `ensure_ascii=False` keeps accented names readable._
 - **Sample** → first ~20 lines of a real run copied to `data/sample/adzuna_sample.jsonl` (raw gitignored, sample committed). _Why: repo stays runnable/legible without committing scraped data; real slice reads better than a fixture in a portfolio._
 
+### Step 5 — Clean → SQLite
+- **Schema** → one flat row per posting; columns `id, role_query, title, company, location, area, category, contract_time, contract_type, salary_min, salary_max, salary_is_predicted, description, created, remote, fetched_at`. Nested Adzuna fields flattened (`company.display_name`, `location.display_name`, `location.area`, `category.tag`); `contract_time` carried through as the employment-type tag. _Why: the clean layer is the table steps 6–7 live on; flatten once here so downstream is pure pandas, not dict-spelunking._
+- **Remote tag** → derived, four-state `remote`/`hybrid`/`onsite`/`unknown` from `title + description + location` text via layered rules (hybrid keywords → remote keywords → onsite → `unknown` when no signal at all). _Why: Adzuna has no remote flag and only ~7% of postings mention remote; defaulting the silent 93% to "onsite" would fabricate certainty. `unknown` stays honest (collapsible to onsite in analysis); keeps the hybrid signal step 15 wants. Chose 4-state over binary/3-state for this reason._
+- **Dedup key** → `UNIQUE(id)` on Adzuna's own job id + `INSERT OR IGNORE` (saw 1043 rows / 996 unique ids in run 1 — real intra-run dupes from overlapping role queries). Content-hash key deferred to M2 step 13, designed against real multi-source data. _Why: within one source the Adzuna id IS the canonical identity; a content hash here only adds false-collision risk to solve a cross-source problem that doesn't exist until M2._
+- **Write layer** → stdlib `sqlite3`: hand-written `CREATE TABLE … UNIQUE(id)` + `executemany("INSERT OR IGNORE …")`, globbing `data/raw/*.jsonl`. pandas stays on the read side (step 7). _Why: this step exists for the schema + DB-enforced dedup — `sqlite3` is the only option that can express the UNIQUE constraint and INSERT OR IGNORE (pandas `to_sql` can't); learning real SQL/DDL transfers to every DB._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -75,7 +81,7 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 2. [x] Skills taxonomy seed _(no deps — can run alongside scaffold)_
 3. [x] Adzuna fetcher
 4. [x] Raw store (JSONL)
-5. [ ] Clean → SQLite
+5. [x] Clean → SQLite
 6. [ ] Dictionary skill extraction
 7. [ ] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
 8. [ ] Source adapter contract
