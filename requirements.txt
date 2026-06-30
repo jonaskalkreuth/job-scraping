@@ -1,0 +1,8 @@
+# Pinned for reproducibility — anyone who installs gets identical versions.
+# Regenerate exact pins after changes with: pip freeze > requirements.txt
+requests==2.32.3
+python-dotenv==1.0.1
+pandas==2.2.3
+matplotlib==3.9.2
+PyYAML==6.0.2
+jupyterlab==4.2.5

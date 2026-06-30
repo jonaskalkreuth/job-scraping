@@ -1,0 +1,22 @@
+# Secrets — real credentials must never be committed.
+.env
+
+# Scraped data — bulky, re-derivable, and possibly ToS-sensitive.
+# We commit a small curated sample (data/sample/) instead; see below.
+data/raw/
+data/*.db
+data/jobs.db
+
+# Python runtime / build cruft.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Jupyter notebook checkpoints.
+.ipynb_checkpoints/
+
+# OS noise.
+.DS_Store
