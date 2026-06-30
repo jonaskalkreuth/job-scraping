@@ -24,6 +24,7 @@ skills:
   - name: r
     category: languages
     aliases: []            # single letter — case-sensitive, no aliases
+    case_sensitive: true   # match "R" only, never the bare letter "r" in prose
   - name: java
     category: languages
     aliases: []
@@ -36,9 +37,11 @@ skills:
   - name: go
     category: languages
     aliases: [golang]      # bare "go" is ambiguous; "golang" is the safe form
+    case_sensitive: true   # match "Go"/"GO", not the verb "go"
   - name: sas
     category: languages
     aliases: []            # also a vendor word — case-sensitive in extraction
+    case_sensitive: true   # match "SAS", not the lowercase "sas"
 
   # --- libraries ---------------------------------------------------------
   - name: pandas
@@ -141,6 +144,7 @@ skills:
   - name: mode
     category: bi_tools
     aliases: []            # common word — case-sensitive guard in extraction
+    case_sensitive: true   # match "Mode"/"MODE", not "mode" the everyday word
   - name: metabase
     category: bi_tools
     aliases: []

@@ -41,6 +41,17 @@ def load_skills(path=None) -> pd.DataFrame:
     # `aliases` list stays intact as a single object-dtype cell per row.
     df = pd.json_normalize(records)
 
+    # `case_sensitive` is optional per record (only the ~4 ambiguous short
+    # terms set it). Default the rest to False so step 6 can read the column
+    # unconditionally, and older fixtures that predate the field still load.
+    if "case_sensitive" not in df.columns:
+        df["case_sensitive"] = False
+    else:
+        # `== True` turns the mixed True/None object column straight into a
+        # clean bool Series (None -> False) without fillna's deprecated
+        # object-downcasting warning.
+        df["case_sensitive"] = df["case_sensitive"] == True  # noqa: E712
+
     _validate(df, path)
     return df
 
