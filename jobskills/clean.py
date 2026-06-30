@@ -1,131 +1,40 @@
-"""Clean zone: parse raw Adzuna JSONL into one tidy SQLite table.
+"""Clean zone: parse raw JSONL (any source) into one tidy SQLite table.
 
-The raw zone (store_raw) keeps each posting exactly as Adzuna sent it. This
-module is the *clean* layer: it flattens each nested posting into a flat row,
-derives a remote tag from the text, and inserts rows into data/jobs.db with a
-UNIQUE(id) constraint so re-runs never double-count. Steps 6-7 (skill
-extraction, charts) read from this table, not the raw files.
+The raw zone (store_raw) keeps each posting exactly as its source sent it. This
+module is the *clean* layer: it reads every raw record, dispatches it to the
+source that knows how to flatten it (sources.BY_NAME → Source.map), and inserts
+the resulting NormalizedPosting rows into data/jobs.db under a UNIQUE(id)
+constraint so re-runs never double-count. Steps 6-7 read from this table.
+
+After the M2 step-8 retrofit this module is source-agnostic: it knows the
+NormalizedPosting schema (schema.COLUMNS) and the registry, nothing else. The
+Adzuna-specific flattening that lived here moved to sources.AdzunaSource.map.
 """
 
+from dataclasses import astuple
 from pathlib import Path
 import json
-import re
 import sqlite3
 
 from jobskills import config
-
-# Remote signal is inferred from posting text — Adzuna has no remote field, and
-# only ~7% of postings mention it at all. We classify into four states rather
-# than forcing a binary: defaulting the silent majority to "onsite" would
-# fabricate certainty, so text with no signal stays "unknown" (honest, and
-# collapsible to onsite downstream if a given analysis wants that).
-#
-# \b word-boundaries stop "wfh" matching inside another word and keep "remote"
-# from firing on e.g. "remotely-related" false friends less aggressively.
-_HYBRID_RE = re.compile(r"\bhybrid\b", re.IGNORECASE)
-_REMOTE_RE = re.compile(
-    r"\b(remote|work from home|wfh|home[- ]?based|fully remote)\b", re.IGNORECASE
-)
-_ONSITE_RE = re.compile(
-    r"\b(on[- ]?site|office[- ]?based|in[- ]?office|in[- ]?person)\b", re.IGNORECASE
-)
+from jobskills import sources
+from jobskills.schema import COLUMNS
 
 
-def derive_remote(title: str, description: str, location: str) -> str:
-    """Classify a posting's work mode from its text: hybrid/remote/onsite/unknown.
+def _column_ddl() -> str:
+    """Column definitions for the jobs table, derived from COLUMNS.
 
-    Precedence is deliberate and ordered most-specific first:
-      1. hybrid  — a hybrid posting often *also* says "remote", so check it first
-                   or those would be mislabelled plain "remote".
-      2. remote  — explicit remote/WFH language.
-      3. onsite  — explicit on-site/office language.
-      4. unknown — no signal at all (the common case); we do NOT assume onsite.
+    Everything is TEXT except the two numeric salary fields — SQLite is
+    dynamically typed, so this is mostly documentation + light affinity. id is
+    the source's native id and stays TEXT (Adzuna sends it as a string).
     """
-    text = f"{title} {description} {location}"
-    if _HYBRID_RE.search(text):
-        return "hybrid"
-    if _REMOTE_RE.search(text):
-        return "remote"
-    if _ONSITE_RE.search(text):
-        return "onsite"
-    return "unknown"
-
-
-# Column order is the contract between the table schema, the row tuples, and the
-# INSERT statement — defined once here so all three can never drift apart.
-COLUMNS = [
-    "id", "country", "role_query", "title", "company", "location", "area",
-    "category", "contract_time", "contract_type", "salary_min", "salary_max",
-    "salary_is_predicted", "description", "created", "remote", "fetched_at",
-]
-
-
-def flatten_record(record: dict) -> dict:
-    """Turn one raw JSONL record into a flat row dict keyed by COLUMNS.
-
-    `record` is what store_raw wrote: {country, role, page, fetched_at, posting},
-    where `posting` is the untouched nested Adzuna dict. We pull the nested bits
-    up (company/location/category) and derive the remote tag from the text.
-    `country` is the query-board code (de/ch/es) — provenance, distinct from the
-    posting's own location/area. Legacy records without it default to None.
-    """
-    p = record["posting"]
-    # .get on the nested dicts so a missing company/location/category yields
-    # None rather than a KeyError — Adzuna occasionally omits them.
-    company = (p.get("company") or {}).get("display_name")
-    location = (p.get("location") or {}).get("display_name")
-    area = (p.get("location") or {}).get("area")
-    category = (p.get("category") or {}).get("tag")
-    title = p.get("title") or ""
-    description = p.get("description") or ""
-
-    return {
-        "id": p.get("id"),
-        "country": record.get("country"),
-        "role_query": record.get("role"),
-        "title": title,
-        "company": company,
-        "location": location,
-        # area is a list (["UK","South East",...]); JSON-encode it so the cell
-        # round-trips losslessly through SQLite's text storage.
-        "area": json.dumps(area, ensure_ascii=False) if area else None,
-        "category": category,
-        "contract_time": p.get("contract_time"),
-        "contract_type": p.get("contract_type"),
-        "salary_min": p.get("salary_min"),
-        "salary_max": p.get("salary_max"),
-        "salary_is_predicted": p.get("salary_is_predicted"),
-        "description": description,
-        "created": p.get("created"),
-        "remote": derive_remote(title, description, location or ""),
-        "fetched_at": record.get("fetched_at"),
-    }
-
-
-# id is the natural key: UNIQUE makes INSERT OR IGNORE a no-op on a re-seen
-# posting, so re-runs (and overlapping role queries within one run) never
-# double-count. id stays TEXT because Adzuna sends it as a string.
-_CREATE_TABLE = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id                  TEXT PRIMARY KEY,
-    country             TEXT,
-    role_query          TEXT,
-    title               TEXT,
-    company             TEXT,
-    location            TEXT,
-    area                TEXT,
-    category            TEXT,
-    contract_time       TEXT,
-    contract_type       TEXT,
-    salary_min          REAL,
-    salary_max          REAL,
-    salary_is_predicted TEXT,
-    description         TEXT,
-    created             TEXT,
-    remote              TEXT,
-    fetched_at          TEXT
-)
-"""
+    numeric = {"salary_min", "salary_max"}
+    defs = [f"{c} {'REAL' if c in numeric else 'TEXT'}" for c in COLUMNS]
+    # id is the natural key within a source: UNIQUE makes INSERT OR IGNORE a
+    # no-op on a re-seen posting, so re-runs and overlapping role queries never
+    # double-count. (Cross-source id collisions are step 13's problem.)
+    defs[COLUMNS.index("id")] += " PRIMARY KEY"
+    return ",\n    ".join(defs)
 
 
 def _iter_raw_records():
@@ -138,18 +47,27 @@ def _iter_raw_records():
                     yield json.loads(line)
 
 
+def _map_record(raw: dict):
+    """Dispatch one raw record to its source's mapper → NormalizedPosting.
+
+    Legacy M1 records predate the `source` field; default them to "adzuna".
+    """
+    name = raw.get("source", "adzuna")
+    return sources.BY_NAME[name].map(raw)
+
+
 def load(db_path: Path | None = None) -> tuple[int, int]:
     """Parse all raw JSONL into the jobs table. Returns (seen, inserted).
 
-    `seen` is how many postings we read; `inserted` is how many were new
-    (the difference is dupes the UNIQUE(id) constraint silently dropped).
+    `seen` is how many postings we read; `inserted` is how many were new (the
+    difference is dupes the UNIQUE(id) constraint silently dropped).
     """
     db_path = db_path or config.SQLITE_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    rows = [flatten_record(r) for r in _iter_raw_records()]
-    # Build value tuples in COLUMNS order so they line up with the placeholders.
-    tuples = [tuple(row[c] for c in COLUMNS) for row in rows]
+    # astuple() emits fields in dataclass-definition order == COLUMNS order, so
+    # tuples line up with the placeholders without re-keying by column name.
+    tuples = [astuple(_map_record(r)) for r in _iter_raw_records()]
 
     placeholders = ", ".join(["?"] * len(COLUMNS))
     insert_sql = (
@@ -157,7 +75,7 @@ def load(db_path: Path | None = None) -> tuple[int, int]:
     )
 
     with sqlite3.connect(db_path) as conn:
-        conn.execute(_CREATE_TABLE)
+        conn.execute(f"CREATE TABLE IF NOT EXISTS jobs (\n    {_column_ddl()}\n)")
         before = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         conn.executemany(insert_sql, tuples)
         after = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]

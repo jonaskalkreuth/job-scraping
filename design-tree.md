@@ -27,7 +27,7 @@
     - [x] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  ✅ `extract.py` builds `skill_hits(posting_id, skill, category)` w/ `UNIQUE(posting_id, skill)` + `INSERT OR IGNORE` (presence-not-frequency, idempotent); word-boundary `\b` matching, case-sensitive variants for ambiguous short terms via new `case_sensitive` taxonomy column (R/Go/SAS/Mode); EU rebuild: 624 hits across 337 postings (top: machine learning 154, sql 80, power bi 79, azure 58)
     - [x] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  ✅ `notebooks/01_first_analysis.ipynb` loads `skill_hits`+`jobs`, ranks skills by **share of postings** (denominator = 1389 distinct postings, not the 337 matched), explicit matplotlib `barh` top-15 w/ `invert_yaxis`; runs end-to-end (nbconvert), chart embedded. EU rebuild top: machine learning 11.1% / sql 5.8% / power bi 5.7% / azure 4.2%. Surfaced finding: only ~24% of postings matched any taxonomy term → coverage gap + a language gap (CH 33% vs DE 23% / ES 22% match — English-only taxonomy under-matches DE/ES) motivating M3 mining + DE/ES aliases. **M1 shipped (UK→EU re-scope folded in).**
   - M2 — Add remaining sources
-    - [ ] **Source adapter contract** — common fetcher interface + normalized output schema all sources map into — _why leaf: formalizes M1's clean schema_
+    - [x] **Source adapter contract** — common fetcher interface + normalized output schema all sources map into — _why leaf: formalizes M1's clean schema_  ✅ `schema.py` frozen `NormalizedPosting` dataclass (source-neutral; `COLUMNS` derived from `fields()`, renamed Adzuna `country`→`source_region`, added `source`); `sources.py` `Source(ABC)` w/ abstract `fetch`/`map` + `AdzunaSource` (absorbs M1 `flatten_record` + `derive_remote`) + `SOURCES`/`BY_NAME` registry; `store_raw`/`clean` now source-agnostic (write records, dispatch map via registry). Adzuna retrofit rebuilt `jobs` from raw through the contract: identical 1447→1389, source_region de 735/es 464/ch 190, skill_hits 624 preserved. Verified: ABC blocks a source missing `map()` (TypeError at construction); legacy raw records (no `source`) map via `country`/`role` fallbacks. New runs write `data/raw/jobs_<UTC>.jsonl`._ Mappers for the 3 remote boards are step 12; only the interface lands here.
     - [ ] **Remotive fetcher** — JSON API — _why leaf: documented API_  (needs adapter contract)
     - [ ] **WeWorkRemotely fetcher** — RSS feed parse — _why leaf: fixed feed format_  (needs adapter contract)
     - [ ] **RemoteOK fetcher** — JSON API — _why leaf: documented API_  (needs adapter contract)
@@ -83,6 +83,13 @@
 - **Chart** → explicit matplotlib `fig, ax = plt.subplots()` + `ax.barh()`, **horizontal**, top-N skills. _Why: horizontal so long skill names read cleanly on the y-axis; explicit `fig`/`ax` object model is the API every later chart uses — worth owning over `df.plot`._
 - **Category grouping deferred** → the `category` column carried into `skill_hits` (step 6) is left unused here; grouping skill demand by category waits for M3. _Why: keep the M1-ship chart dead simple — one honest ranking._
 
+### Step 8 — Source adapter contract
+- **Normalized schema** → frozen `@dataclass NormalizedPosting`, source-neutral fields + a `source` provenance column (today's Adzuna-flavored `COLUMNS` list generalized). _Why: a real object that fails loudly at the mapper when a source maps it wrong, instead of a bare convention 4 sources fill differently; dataclasses are the idiomatic modern record type._
+- **Source interface** → `abc.ABC` `Source` with `@abstractmethod fetch() -> list[dict]` (raw records) and `map(raw) -> NormalizedPosting`. _Why: runtime-enforced conformance — Python refuses to instantiate a source missing a method, catching it the moment WWR/RemoteOK are added, with no type checker in the loop. Chose ABC over `Protocol` (structural typing's guarantee evaporates without a checker we're not running) and over plain functions+registry (interface would be an unenforced naming convention)._
+- **Registry + driver** → explicit `SOURCES = [AdzunaSource()]` list in one module; the run loops it (`fetch`→store) and clean loops it (`map`). _Why: 4 known sources don't justify decorator auto-registration or importlib entry-points — explicit list is legible and enough._
+- **Adzuna retrofit (tracer-bullet validation)** → wrap existing fetch/clean logic as `AdzunaSource(Source)`: `fetch()` returns raw records carrying `country`/`role` provenance, `map()` is today's `flatten_record`. Add `source` to the raw JSONL record and the clean schema; legacy rows default `source="adzuna"`. _Why: if Adzuna can't fit the interface cleanly, the interface is wrong — retrofitting proves the contract isn't vapor before 3 new sources depend on it._
+- **Scope line** → only the *mapper interface* is defined here; the Remotive/WWR/RemoteOK mappers are step 12.
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -93,7 +100,7 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 5. [x] Clean → SQLite
 6. [x] Dictionary skill extraction
 7. [x] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
-8. [ ] Source adapter contract
+8. [x] Source adapter contract
 9. [ ] Remotive fetcher
 10. [ ] WeWorkRemotely fetcher
 11. [ ] RemoteOK fetcher

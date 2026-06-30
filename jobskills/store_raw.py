@@ -1,14 +1,14 @@
-"""Persist raw Adzuna fetch results to append-only JSONL (the raw zone).
+"""Persist raw fetch results (any source) to append-only JSONL (the raw zone).
 
-The fetcher (fetch_adzuna) returns (country, role, page, raw_json) quads but
-writes nothing to disk. This module is the *raw zone*: it explodes each page's
-results into one posting per line and appends them to a per-run timestamped
-file under data/raw/.
+Each Source.fetch() returns a list of raw records already tagged with provenance
+(a "source" key, plus whatever that source's map() needs). This module writes
+them verbatim, one per line, to a per-run timestamped file under data/raw/.
 
-Raw means raw — each posting is stored exactly as Adzuna sent it (full nested
-dict), with only provenance fields wrapped around it. No parsing, dedup, or
-remote tagging here; those are the clean step's job (step 5), kept separate so
-the raw store can be re-parsed without re-scraping.
+Raw means raw — each record is stored exactly as its source produced it. No
+parsing, dedup, or remote tagging here; that's the clean step's job (clean.py),
+kept separate so the raw store can be re-parsed without re-fetching. After the
+step-8 retrofit this module is source-agnostic: it writes records and drives the
+SOURCES registry, but knows nothing about any specific board's shape.
 """
 
 from datetime import datetime, timezone
@@ -16,7 +16,7 @@ from pathlib import Path
 import json
 
 from jobskills import config
-from jobskills import fetch_adzuna
+from jobskills import sources
 
 
 def _run_filename() -> str:
@@ -24,54 +24,43 @@ def _run_filename() -> str:
 
     A fresh file per run keeps each snapshot separate (a re-run never doubles
     into an existing file) and lets Phase B simply accumulate dated snapshots.
-    UTC and a colon-free, lexically-sortable stamp so files sort chronologically
-    by name and stay filesystem-safe.
+    Colon-free, lexically-sortable stamp so files sort chronologically by name.
     """
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"adzuna_{stamp}.jsonl"
+    return f"jobs_{stamp}.jsonl"
 
 
-def store_raw(quads: list[tuple[str, str, int, dict]]) -> tuple[Path, int]:
-    """Append every posting in `quads` to one per-run JSONL file.
+def store_raw(records: list[dict], path: Path | None = None) -> tuple[Path, int]:
+    """Append every record to one per-run JSONL file. Returns (path, n_written).
 
-    Each quad is (country, role, page, raw_json) from the fetcher. We unnest
-    raw_json["results"] into one line per posting, wrapping each with its
-    provenance: which country board and role query and page it came from, and
-    when this run ran.
-
-    Returns (path_written, n_postings).
+    Records are written exactly as given — provenance and shape are the source's
+    responsibility, not ours.
     """
     config.RAW_DIR.mkdir(parents=True, exist_ok=True)
-    path = config.RAW_DIR / _run_filename()
-    fetched_at = datetime.now(timezone.utc).isoformat()  # one stamp for the run
+    path = path or config.RAW_DIR / _run_filename()
 
     n = 0
-    # Append mode: never truncate. The filename is unique per run, so "a" and
-    # "w" behave alike here — but "a" is the honest intent for an append-only
-    # raw zone, and it's safe if a run ever shares a file.
+    # Append mode: the honest intent for an append-only raw zone, and safe if a
+    # run ever shares a file. ensure_ascii=False keeps accented text readable;
+    # one JSON object per line is what makes it JSONL: streamable, appendable.
     with path.open("a", encoding="utf-8") as f:
-        for country, role, page, raw_json in quads:
-            # Unnest the page envelope: one Adzuna page holds ~50 postings under
-            # "results". We want one record per posting, not per page.
-            for posting in raw_json.get("results", []):
-                record = {
-                    "country": country,  # which Adzuna board this came from
-                    "role": role,
-                    "page": page,
-                    "fetched_at": fetched_at,
-                    "posting": posting,  # stored whole, untouched
-                }
-                # ensure_ascii=False so non-ASCII (e.g. accented company names)
-                # stays human-readable rather than \uXXXX escapes. One JSON
-                # object per line is what makes it JSONL: streamable, appendable.
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                n += 1
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            n += 1
     return path, n
 
 
+def run(srcs: list[sources.Source] | None = None) -> tuple[Path, int]:
+    """Fetch every registered source and write all records to one run file."""
+    srcs = srcs if srcs is not None else sources.SOURCES
+    all_records: list[dict] = []
+    for src in srcs:
+        all_records.extend(src.fetch())
+    return store_raw(all_records)
+
+
 if __name__ == "__main__":
-    # End-to-end: fetch every configured role, then persist to data/raw/.
-    # Needs live Adzuna creds in .env.
-    quads = fetch_adzuna.fetch_all()
-    path, n = store_raw(quads)
+    # End-to-end: fetch every registered source, then persist to data/raw/.
+    # Needs live credentials (Adzuna keys in .env).
+    path, n = run()
     print(f"wrote {n} postings -> {path}")
