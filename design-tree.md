@@ -21,9 +21,9 @@
     - [x] **Adzuna fetcher** — query API per role, paginate, rate-limit + UA + retry, return raw JSON — _why leaf: API documented, behavior known_  ✅ `fetch_adzuna.py` returns `(role, page, raw_json)` triples; smoke test live (data analyst: 1895 available)  _Note: remote filtering moved OUT of the fetcher → derived as a tag in clean→SQLite (step 5). Why: Adzuna has no reliable remote flag, and filtering at fetch time would bake a crude guess into the raw store, breaking the raw/clean reparse decision. Fetcher queries broadly (`what=<role>`); remote is re-derivable from posting text downstream._
     - [x] **Raw store (JSONL)** — append each raw response to data/raw/*.jsonl — _why leaf: append-only write_  ✅ `store_raw.py` unnests pages → one posting/line into per-run `data/raw/adzuna_<UTC>.jsonl`; first real run wrote 1043 postings across 5 roles, all valid JSONL; 20-line committed sample in `data/sample/`
     - [x] **Clean → SQLite** — parse raw JSON to flat row schema, build dedup key, derive remote tag from posting text, UNIQUE insert — _why leaf: schema small/known_  ✅ `clean.py` flattens raw JSONL → `jobs` table in `data/jobs.db`; `UNIQUE(id)` + `INSERT OR IGNORE` is idempotent (1043 read → 996 inserted, 47 intra-run dupes dropped; re-run inserts 0). Remote derived 4-state: unknown 723 / hybrid 180 / remote 52 / onsite 41. 16-col flat schema in `COLUMNS`
-    - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode/statistics) carry no loose aliases for case-sensitive matching in step 6
-    - [ ] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  (needs clean SQLite + taxonomy)
-    - [ ] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  (needs extraction)
+    - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode) carry no loose aliases for case-sensitive matching in step 6
+    - [x] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  ✅ `extract.py` builds `skill_hits(posting_id, skill, category)` w/ `UNIQUE(posting_id, skill)` + `INSERT OR IGNORE` (presence-not-frequency, idempotent); word-boundary `\b` matching, case-sensitive variants for ambiguous short terms via new `case_sensitive` taxonomy column (R/Go/SAS/Mode); first run: 346 hits across 178 postings / 43 skills (top: machine learning 49, power bi 44, sql 39, python 28)
+    - [x] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  ✅ `notebooks/01_first_analysis.ipynb` loads `skill_hits`+`jobs`, ranks skills by **share of postings** (denominator = 996 distinct postings, not the 178 matched), explicit matplotlib `barh` top-15 w/ `invert_yaxis`; runs end-to-end (nbconvert), chart embedded. Top: machine learning 4.9% / power bi 4.4% / sql 3.9% / python 2.8%. Surfaced finding: only ~18% of postings matched any taxonomy term → coverage gap motivating M3 mining. **M1 shipped.**
   - M2 — Add remaining sources
     - [ ] **Source adapter contract** — common fetcher interface + normalized output schema all sources map into — _why leaf: formalizes M1's clean schema_
     - [ ] **Remotive fetcher** — JSON API — _why leaf: documented API_  (needs adapter contract)
@@ -74,6 +74,12 @@
 - **Dedup key** → `UNIQUE(id)` on Adzuna's own job id + `INSERT OR IGNORE` (saw 1043 rows / 996 unique ids in run 1 — real intra-run dupes from overlapping role queries). Content-hash key deferred to M2 step 13, designed against real multi-source data. _Why: within one source the Adzuna id IS the canonical identity; a content hash here only adds false-collision risk to solve a cross-source problem that doesn't exist until M2._
 - **Write layer** → stdlib `sqlite3`: hand-written `CREATE TABLE … UNIQUE(id)` + `executemany("INSERT OR IGNORE …")`, globbing `data/raw/*.jsonl`. pandas stays on the read side (step 7). _Why: this step exists for the schema + DB-enforced dedup — `sqlite3` is the only option that can express the UNIQUE constraint and INSERT OR IGNORE (pandas `to_sql` can't); learning real SQL/DDL transfers to every DB._
 
+### Step 7 — First analysis + chart
+- **Notebook** → `notebooks/01_first_analysis.ipynb`, path-wired to `import jobskills`; reads `skill_hits` from SQLite via pandas. _Why: first entry in `notebooks/`; establishes the notebook-as-narrative pattern M4 builds on._
+- **Demand metric** → **share of postings (%)**, not absolute count: bar = % of distinct postings mentioning each skill (denominator = distinct `posting_id`, not total rows). _Why: normalizes for snapshot size, so it stays comparable when Phase B re-runs on a bigger dataset; reads better in a portfolio ("1 in 5 postings want SQL"). The share-vs-count distinction recurs all over DS._
+- **Chart** → explicit matplotlib `fig, ax = plt.subplots()` + `ax.barh()`, **horizontal**, top-N skills. _Why: horizontal so long skill names read cleanly on the y-axis; explicit `fig`/`ax` object model is the API every later chart uses — worth owning over `df.plot`._
+- **Category grouping deferred** → the `category` column carried into `skill_hits` (step 6) is left unused here; grouping skill demand by category waits for M3. _Why: keep the M1-ship chart dead simple — one honest ranking._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -82,8 +88,8 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 3. [x] Adzuna fetcher
 4. [x] Raw store (JSONL)
 5. [x] Clean → SQLite
-6. [ ] Dictionary skill extraction
-7. [ ] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
+6. [x] Dictionary skill extraction
+7. [x] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
 8. [ ] Source adapter contract
 9. [ ] Remotive fetcher
 10. [ ] WeWorkRemotely fetcher
