@@ -60,6 +60,17 @@ ADZUNA_COUNTRY: str = "gb"
 RESULTS_PER_PAGE: int = 50
 MAX_PAGES: int = 5
 
+# HTTP politeness + resilience for the fetcher.
+# Identify ourselves honestly (not a browser spoof) so the API owner can see
+# who's calling; a contact URL is good etiquette for any scraper/API client.
+USER_AGENT: str = "jobskills-portfolio/0.1 (+https://github.com/)"
+# Seconds to wait for a response before giving up on a single request.
+REQUEST_TIMEOUT: int = 20
+# How many times to retry a failed request (429/5xx) before raising.
+MAX_RETRIES: int = 3
+# Fixed courtesy pause between successive requests, in seconds.
+REQUEST_DELAY: float = 1.0
+
 # Data layout (raw append-only, clean SQLite, committed sample).
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
