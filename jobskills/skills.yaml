@@ -202,21 +202,30 @@ skills:
     aliases: []
 
   # --- methods -----------------------------------------------------------
+  - name: ai
+    category: methods
+    # New skill from step-11 n-gram mining (~230 distinct jobs). DE/ES aliases
+    # fold the local-language variants in. Lowercase + \b-bounded is safe — "ai"
+    # is not an ordinary word, unlike the short terms that need case_sensitive.
+    aliases: [artificial intelligence, künstliche intelligenz, inteligencia artificial]
   - name: machine learning
     category: methods
-    aliases: [ml]
+    # DE/ES aliases (step 11b). Low-frequency (~1-2% of DE/ES jobs) — DE/ES ads
+    # mostly name skills in English; this is honest marginal recall, not a fix
+    # for the under-match (that's Adzuna's 500-char truncation, see design-tree).
+    aliases: [ml, maschinelles lernen, aprendizaje automático, aprendizaje automatico]
   - name: deep learning
     category: methods
     aliases: []            # "dl" too ambiguous to include
   - name: statistics
     category: methods
-    aliases: []            # "stats" ambiguous — handle case-by-case later
+    aliases: [statistik, estadística, estadistica]   # DE/ES (step 11b); "stats" still too ambiguous
   - name: a/b testing
     category: methods
     aliases: [ab testing, split testing]
   - name: data visualization
     category: methods
-    aliases: [data viz, dataviz, data visualisation]
+    aliases: [data viz, dataviz, data visualisation, datenvisualisierung, visualización de datos]
   - name: regression
     category: methods
     aliases: []
