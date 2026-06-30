@@ -21,8 +21,8 @@ from jobskills import config
 _BASE_URL = "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}"
 
 
-def _build_url(page: int) -> str:
-    return _BASE_URL.format(country=config.ADZUNA_COUNTRY, page=page)
+def _build_url(country: str, page: int) -> str:
+    return _BASE_URL.format(country=country, page=page)
 
 
 def _params(role: str) -> dict:
@@ -67,15 +67,15 @@ def _get(url: str, params: dict) -> dict:
     raise RuntimeError("retry loop exited without returning or raising")
 
 
-def fetch_role(role: str) -> list[dict]:
-    """Page through one role, returning each page's raw JSON response.
+def fetch_role(country: str, role: str) -> list[dict]:
+    """Page through one role on one country board, returning each page's raw JSON.
 
     Stops early when a page returns fewer than a full page of results (the last
     page), so we don't waste calls on empty pages.
     """
     pages: list[dict] = []
     for page in range(1, config.MAX_PAGES + 1):
-        data = _get(_build_url(page), _params(role))
+        data = _get(_build_url(country, page), _params(role))
         pages.append(data)
 
         results = data.get("results", [])
@@ -87,27 +87,30 @@ def fetch_role(role: str) -> list[dict]:
     return pages
 
 
-def fetch_all() -> list[tuple[str, int, dict]]:
-    """Fetch every configured role.
+def fetch_all() -> list[tuple[str, str, int, dict]]:
+    """Fetch every configured role across every configured country board.
 
-    Returns (role, page_number, raw_json) triples so the raw store (step 4) can
-    record provenance — which role query and page each response came from.
+    Returns (country, role, page_number, raw_json) quads so the raw store
+    (step 4) can record provenance — which country board, role query, and page
+    each response came from.
     """
-    out: list[tuple[str, int, dict]] = []
-    for role in config.ROLE_QUERIES:
-        for i, data in enumerate(fetch_role(role), start=1):
-            out.append((role, i, data))
-        time.sleep(config.REQUEST_DELAY)  # pause between roles too
+    out: list[tuple[str, str, int, dict]] = []
+    for country in config.ADZUNA_COUNTRIES:
+        for role in config.ROLE_QUERIES:
+            for i, data in enumerate(fetch_role(country, role), start=1):
+                out.append((country, role, i, data))
+            time.sleep(config.REQUEST_DELAY)  # pause between roles too
     return out
 
 
 if __name__ == "__main__":
-    # Smoke test: one role, one page. Validates live credentials + connectivity
-    # before we wire this into storage. Needs a real .env.
+    # Smoke test: one country, one role, one page. Validates live credentials +
+    # connectivity before we wire this into storage. Needs a real .env.
+    country = config.ADZUNA_COUNTRIES[0]
     role = config.ROLE_QUERIES[0]
-    data = _get(_build_url(1), _params(role))
+    data = _get(_build_url(country, 1), _params(role))
     results = data.get("results", [])
-    print(f"role={role!r}: {len(results)} results on page 1 "
+    print(f"country={country!r} role={role!r}: {len(results)} results on page 1 "
           f"(total available: {data.get('count', '?')})")
     if results:
         first = results[0]

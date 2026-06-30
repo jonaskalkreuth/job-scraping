@@ -54,8 +54,8 @@ def derive_remote(title: str, description: str, location: str) -> str:
 # Column order is the contract between the table schema, the row tuples, and the
 # INSERT statement — defined once here so all three can never drift apart.
 COLUMNS = [
-    "id", "role_query", "title", "company", "location", "area", "category",
-    "contract_time", "contract_type", "salary_min", "salary_max",
+    "id", "country", "role_query", "title", "company", "location", "area",
+    "category", "contract_time", "contract_type", "salary_min", "salary_max",
     "salary_is_predicted", "description", "created", "remote", "fetched_at",
 ]
 
@@ -63,9 +63,11 @@ COLUMNS = [
 def flatten_record(record: dict) -> dict:
     """Turn one raw JSONL record into a flat row dict keyed by COLUMNS.
 
-    `record` is what store_raw wrote: {role, page, fetched_at, posting}, where
-    `posting` is the untouched nested Adzuna dict. We pull the nested bits up
-    (company/location/category) and derive the remote tag from the text.
+    `record` is what store_raw wrote: {country, role, page, fetched_at, posting},
+    where `posting` is the untouched nested Adzuna dict. We pull the nested bits
+    up (company/location/category) and derive the remote tag from the text.
+    `country` is the query-board code (de/ch/es) — provenance, distinct from the
+    posting's own location/area. Legacy records without it default to None.
     """
     p = record["posting"]
     # .get on the nested dicts so a missing company/location/category yields
@@ -79,6 +81,7 @@ def flatten_record(record: dict) -> dict:
 
     return {
         "id": p.get("id"),
+        "country": record.get("country"),
         "role_query": record.get("role"),
         "title": title,
         "company": company,
@@ -105,6 +108,7 @@ def flatten_record(record: dict) -> dict:
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS jobs (
     id                  TEXT PRIMARY KEY,
+    country             TEXT,
     role_query          TEXT,
     title               TEXT,
     company             TEXT,

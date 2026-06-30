@@ -1,7 +1,7 @@
 """Persist raw Adzuna fetch results to append-only JSONL (the raw zone).
 
-The fetcher (fetch_adzuna) returns (role, page, raw_json) triples but writes
-nothing to disk. This module is the *raw zone*: it explodes each page's
+The fetcher (fetch_adzuna) returns (country, role, page, raw_json) quads but
+writes nothing to disk. This module is the *raw zone*: it explodes each page's
 results into one posting per line and appends them to a per-run timestamped
 file under data/raw/.
 
@@ -31,12 +31,13 @@ def _run_filename() -> str:
     return f"adzuna_{stamp}.jsonl"
 
 
-def store_raw(triples: list[tuple[str, int, dict]]) -> tuple[Path, int]:
-    """Append every posting in `triples` to one per-run JSONL file.
+def store_raw(quads: list[tuple[str, str, int, dict]]) -> tuple[Path, int]:
+    """Append every posting in `quads` to one per-run JSONL file.
 
-    Each triple is (role, page, raw_json) from the fetcher. We unnest
+    Each quad is (country, role, page, raw_json) from the fetcher. We unnest
     raw_json["results"] into one line per posting, wrapping each with its
-    provenance: which role query and page it came from, and when this run ran.
+    provenance: which country board and role query and page it came from, and
+    when this run ran.
 
     Returns (path_written, n_postings).
     """
@@ -49,11 +50,12 @@ def store_raw(triples: list[tuple[str, int, dict]]) -> tuple[Path, int]:
     # "w" behave alike here — but "a" is the honest intent for an append-only
     # raw zone, and it's safe if a run ever shares a file.
     with path.open("a", encoding="utf-8") as f:
-        for role, page, raw_json in triples:
+        for country, role, page, raw_json in quads:
             # Unnest the page envelope: one Adzuna page holds ~50 postings under
             # "results". We want one record per posting, not per page.
             for posting in raw_json.get("results", []):
                 record = {
+                    "country": country,  # which Adzuna board this came from
                     "role": role,
                     "page": page,
                     "fetched_at": fetched_at,
@@ -70,6 +72,6 @@ def store_raw(triples: list[tuple[str, int, dict]]) -> tuple[Path, int]:
 if __name__ == "__main__":
     # End-to-end: fetch every configured role, then persist to data/raw/.
     # Needs live Adzuna creds in .env.
-    triples = fetch_adzuna.fetch_all()
-    path, n = store_raw(triples)
+    quads = fetch_adzuna.fetch_all()
+    path, n = store_raw(quads)
     print(f"wrote {n} postings -> {path}")

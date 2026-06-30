@@ -53,8 +53,11 @@ ROLE_QUERIES: list[str] = [
     "business intelligence developer",
 ]
 
-# Adzuna is country-scoped; "gb" = United Kingdom. Change per market.
-ADZUNA_COUNTRY: str = "gb"
+# Adzuna is country-scoped — one endpoint per country, no pan-Europe call — so
+# we loop over a list of boards. Target market: German-speaking + Spanish data
+# scenes (de/ch/es). Pan-EU *remote* coverage comes from the M2 remote boards
+# (Remotive/RemoteOK/WWR), not from adding more Adzuna country boards.
+ADZUNA_COUNTRIES: list[str] = ["de", "ch", "es"]
 
 # Results per page (Adzuna max is 50) and how many pages to pull per role.
 RESULTS_PER_PAGE: int = 50
