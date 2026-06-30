@@ -17,11 +17,13 @@ one more `Source` subclass and appending it to `SOURCES`.
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 import json
 import re
 
 from jobskills import config
 from jobskills import fetch_adzuna
+from jobskills import fetch_remotive
 from jobskills.schema import NormalizedPosting
 
 
@@ -153,9 +155,113 @@ class AdzunaSource(Source):
         )
 
 
+# --- Remotive ---------------------------------------------------------------
+# Remotive returns descriptions as HTML; extract.py runs word-boundary regex
+# over the text, so tags would inject noise ("li", attribute values, &amp;...).
+# We strip to plain text here so a Remotive description reads the same as an
+# Adzuna one. Stdlib only — no bs4 dependency for one field.
+class _HTMLTextExtractor(HTMLParser):
+    """Collect the text nodes of an HTML fragment, dropping all markup.
+
+    convert_charrefs (HTMLParser default) already turns &amp;/&#160; etc. into
+    real characters before handing them to handle_data, so entities come out
+    decoded with no separate unescape pass.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._chunks: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self._chunks.append(data)
+
+    def text(self) -> str:
+        return "".join(self._chunks)
+
+
+# Matches any run of whitespace (incl. the newlines the HTML had); we collapse
+# them to single spaces so the stripped text isn't full of layout gaps.
+_WS_RE = re.compile(r"\s+")
+
+
+def _html_to_text(html: str) -> str:
+    """Strip HTML tags to a single clean line of whitespace-collapsed text."""
+    parser = _HTMLTextExtractor()
+    parser.feed(html)
+    return _WS_RE.sub(" ", parser.text()).strip()
+
+
+def _normalize_job_type(job_type: str | None) -> str | None:
+    """Map Remotive's job_type onto Adzuna's contract_time vocabulary.
+
+    Remotive's "full_time"/"part_time" already match Adzuna's contract_time
+    values, so the part-time vs full-time comparison (step 12) can group on the
+    single contract_time column across both sources. Other values (contract,
+    freelance, internship) pass through verbatim; "" / missing → None.
+    """
+    job_type = (job_type or "").strip().lower()
+    return job_type or None
+
+
+class RemotiveSource(Source):
+    """Remotive, a keyless global remote-jobs board.
+
+    fetch() runs one search per role (no pagination). map() flattens a Remotive
+    job into a NormalizedPosting: region-agnostic (source_region=None), every
+    posting is remote by definition (so `remote` is set directly, not inferred),
+    and the HTML description is stripped to plain text.
+    """
+
+    name = "remotive"
+
+    def fetch(self) -> list[dict]:
+        """One raw record per posting, tagged with the role query that found it."""
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        records: list[dict] = []
+        for role, job in fetch_remotive.fetch_all():
+            records.append(
+                {
+                    "source": self.name,
+                    "role_query": role,
+                    "fetched_at": fetched_at,
+                    "posting": job,  # stored whole, untouched
+                }
+            )
+        return records
+
+    def map(self, raw: dict) -> NormalizedPosting:
+        """Flatten one Remotive raw record into a NormalizedPosting."""
+        p = raw["posting"]
+        # Remotive sends some fields with stray whitespace (e.g. trailing spaces
+        # in title/company); strip the ones we surface.
+        title = (p.get("title") or "").strip()
+        location = (p.get("candidate_required_location") or "").strip() or None
+
+        return NormalizedPosting(
+            source=raw.get("source", self.name),
+            id=str(p.get("id")),  # Remotive ids are ints; clean stores TEXT
+            role_query=raw.get("role_query"),
+            source_region=None,  # global remote board — no geographic scope
+            title=title,
+            company=(p.get("company_name") or "").strip() or None,
+            location=location,
+            area=None,  # Remotive has no structured area breakdown
+            category=p.get("category"),
+            contract_time=_normalize_job_type(p.get("job_type")),
+            contract_type=None,  # Remotive folds everything into job_type
+            salary_min=None,  # Remotive gives only a free-text salary string
+            salary_max=None,
+            salary_is_predicted=None,
+            description=_html_to_text(p.get("description") or ""),
+            created=p.get("publication_date"),
+            remote="remote",  # it's a remote board; no need to infer from text
+            fetched_at=raw.get("fetched_at"),
+        )
+
+
 # The registry: every source one run touches. The fetch driver (store_raw) loops
 # it to pull raw data; the clean layer uses BY_NAME to dispatch each raw record
 # back to the source that knows how to map it. 4 known sources don't justify
 # decorator auto-registration or entry-points — an explicit list is legible.
-SOURCES: list[Source] = [AdzunaSource()]
+SOURCES: list[Source] = [AdzunaSource(), RemotiveSource()]
 BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}

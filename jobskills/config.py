@@ -59,6 +59,12 @@ ROLE_QUERIES: list[str] = [
 # (Remotive/RemoteOK/WWR), not from adding more Adzuna country boards.
 ADZUNA_COUNTRIES: list[str] = ["de", "ch", "es"]
 
+# Remotive is keyless and region-agnostic (a global remote board), so it needs
+# no credentials and no country list — just the shared ROLE_QUERIES. `limit`
+# caps how many matches each search returns; Remotive asks callers to be modest
+# and cache rather than hammer the endpoint, so we keep this bounded.
+REMOTIVE_LIMIT: int = 100
+
 # Results per page (Adzuna max is 50) and how many pages to pull per role.
 RESULTS_PER_PAGE: int = 50
 MAX_PAGES: int = 5

@@ -3,7 +3,7 @@
 ## Key decisions
 - **Tree organization** → by delivery milestone, not pipeline stage. _Why: matches tracer-bullet build order; each milestone is independently shippable._
 - **Target roles** → data analyst, data scientist, BI analyst, analytics engineer, BI developer. _Why: related-roles set is wide enough to compare adjacent roles, narrow enough to scrape cleanly._
-- **Sources** → Adzuna API + remote boards (Remotive/WeWorkRemotely/RemoteOK); no Indeed/LinkedIn. _Why: API/scraper-friendly only — legal, stable, sidesteps anti-bot arms race._
+- **Sources** → Adzuna API + remote boards, **Remotive-first** (RemoteOK/WWR optional); no Indeed/LinkedIn. _Why: API/scraper-friendly only — legal, stable, sidesteps anti-bot arms race. Verified 2026-06-30: Adzuna's free API caps descriptions at 500 chars (1381/1389 truncated mid-sentence), which starves skill extraction (the requirements list is cut off) and leaves employment-type/remote columns near-empty (15 part-time, 44 remote of 1389). Remotive returns full descriptions (median ~4.5k chars) + a clean `job_type` tag, so it alone fixes truncation AND the empty part-time/remote columns; RemoteOK/WWR only add volume (employment type buried in tags / absent, plus client-side role filtering) so they drop to optional._
 - **Geography** → Adzuna boards `de`/`ch`/`es` (Germany/Switzerland/Spain); pan-EU *remote* coverage comes from the M2 remote boards, not from adding more Adzuna country boards. _Why: Adzuna is country-scoped (no Europe-wide call) — three boards cover the target German-speaking + Spanish data scenes without fanning out to 8 boards; remote-first boards already span Europe, so they're the cheaper way to widen remote reach. (Re-scoped from an initial UK-only default.)_
 - **Language** → keep all postings regardless of language; English-only taxonomy under-matches German/Spanish for now, extend `skills.yaml` with DE/ES aliases later (M3). _Why: filtering to English would throw away ~half the DE/ES market and bias the dataset; keeping everything with an honest match-rate caveat is truer to the real market, and aliases are a cheap additive fix._
 - **Part-time handling** → collect all remote, tag employment type, analyze part-time subset AND compare vs full-time. _Why: part-time remote data roles are rare; avoids a dead-on-arrival tiny dataset._
@@ -26,13 +26,12 @@
     - [x] **Skills taxonomy seed** — hand-curated skills.yaml (~60-80 skills, categorized + aliases) — _why leaf: data entry, no deps_  ✅ `jobskills/skills.yaml` 75 skills/8 categories (flat records); `taxonomy.load_skills()` → DataFrame w/ validation (no missing category, no name/alias term collisions across one namespace); both guards verified against broken fixtures; ambiguous short terms (r/sas/go/mode) carry no loose aliases for case-sensitive matching in step 6
     - [x] **Dictionary skill extraction** — match taxonomy vs posting text (word boundaries, aliases), write skill↔posting hits — _why leaf: matching logic, design resolved_  ✅ `extract.py` builds `skill_hits(posting_id, skill, category)` w/ `UNIQUE(posting_id, skill)` + `INSERT OR IGNORE` (presence-not-frequency, idempotent); word-boundary `\b` matching, case-sensitive variants for ambiguous short terms via new `case_sensitive` taxonomy column (R/Go/SAS/Mode); EU rebuild: 624 hits across 337 postings (top: machine learning 154, sql 80, power bi 79, azure 58)
     - [x] **First analysis + chart** — load SQLite → pandas, count skill frequency, top-N bar chart in notebook — _why leaf: count + plot_  ✅ `notebooks/01_first_analysis.ipynb` loads `skill_hits`+`jobs`, ranks skills by **share of postings** (denominator = 1389 distinct postings, not the 337 matched), explicit matplotlib `barh` top-15 w/ `invert_yaxis`; runs end-to-end (nbconvert), chart embedded. EU rebuild top: machine learning 11.1% / sql 5.8% / power bi 5.7% / azure 4.2%. Surfaced finding: only ~24% of postings matched any taxonomy term → coverage gap + a language gap (CH 33% vs DE 23% / ES 22% match — English-only taxonomy under-matches DE/ES) motivating M3 mining + DE/ES aliases. **M1 shipped (UK→EU re-scope folded in).**
-  - M2 — Add remaining sources
+  - M2 — Add remote source (Remotive-first; RemoteOK/WWR optional)
     - [x] **Source adapter contract** — common fetcher interface + normalized output schema all sources map into — _why leaf: formalizes M1's clean schema_  ✅ `schema.py` frozen `NormalizedPosting` dataclass (source-neutral; `COLUMNS` derived from `fields()`, renamed Adzuna `country`→`source_region`, added `source`); `sources.py` `Source(ABC)` w/ abstract `fetch`/`map` + `AdzunaSource` (absorbs M1 `flatten_record` + `derive_remote`) + `SOURCES`/`BY_NAME` registry; `store_raw`/`clean` now source-agnostic (write records, dispatch map via registry). Adzuna retrofit rebuilt `jobs` from raw through the contract: identical 1447→1389, source_region de 735/es 464/ch 190, skill_hits 624 preserved. Verified: ABC blocks a source missing `map()` (TypeError at construction); legacy raw records (no `source`) map via `country`/`role` fallbacks. New runs write `data/raw/jobs_<UTC>.jsonl`._ Mappers for the 3 remote boards are step 12; only the interface lands here.
-    - [ ] **Remotive fetcher** — JSON API — _why leaf: documented API_  (needs adapter contract)
-    - [ ] **WeWorkRemotely fetcher** — RSS feed parse — _why leaf: fixed feed format_  (needs adapter contract)
-    - [ ] **RemoteOK fetcher** — JSON API — _why leaf: documented API_  (needs adapter contract)
-    - [ ] **Per-source normalization mappers** — map each source's fields → common schema, employment-type tag + remote flag — _why leaf: field mapping_  (needs fetchers + clean schema)
-    - [ ] **Cross-source dedup (exact)** — dedup same job across boards via exact key now; fuzzy company+title match noted as later enhancement — _why leaf: exact-now decided_  (needs mappers)
+    - [x] **Remotive fetcher + mapper** — JSON API (`search=<role>`), returns full descriptions (median ~4.5k chars vs Adzuna's 500-char cap) + a clean `job_type` employment tag; map its fields into the step-8 `NormalizedPosting` — _why leaf: documented API, mapper is field-mapping into the existing contract_  (needs adapter contract)  **← M2 primary: one source that fixes both the description-truncation and the empty part-time/remote columns**  ✅ `fetch_remotive.py` (keyless, no pagination — one `?search=<role>&limit=100` call/role; own `_get` duplicated from Adzuna); `RemotiveSource` in `sources.py` maps fields into the step-8 contract: `source_region=None` (global board), `remote="remote"` set directly (no text inference), `contract_time=normalize(job_type)` aligned to Adzuna's vocab (`contract_type=None`, salary `None` — Remotive gives only free-text), description run through a stdlib `html.parser` stripper (HTML→plain text so skill regex matches cleanly). Live run: 170 raw postings → **34 distinct ids** (Remotive's loose full-text `search` overlaps heavily across the 5 role queries, so the same small remote-job pool repeats; UNIQUE(id) collapsed 136 dupes), 0 null ids / 0 empty descriptions / all `remote`, employment tag now populated (25 full / 4 part / 3 contract / 2 freelance — fixes Adzuna's empty part-time column). +83 skill_hits. _Caveat: loose `search` surfaces off-target roles (e.g. a Sales Assistant under "data analyst"); `role_query` carried as provenance so analysis can filter — client-side relevance filter deferred._
+    - [ ] **Cross-source dedup (exact)** — dedup the same job appearing on Adzuna + Remotive via an exact key (company+title or url); fuzzy company+title match noted as a later enhancement — _why leaf: exact-now decided_  (needs the Remotive mapper; Remotive alone is enough to ship M2)  ← **M2 ships: multi-source dataset**
+    - [ ] **RemoteOK fetcher + mapper** *(optional, post-M2 — adds volume)* — JSON `/api` returns the whole latest feed (no server-side search), full descriptions; employment type only inside `tags`, so filter to target roles client-side — _why leaf: field mapping + a client-side relevance filter_  (needs adapter contract)
+    - [ ] **WeWorkRemotely fetcher + mapper** *(optional, post-M2 — adds volume)* — category RSS feeds (no search), full descriptions; no employment-type field at all, filter to roles client-side — _why leaf: feed parse + client-side filter_  (needs adapter contract)
   - M3 — Analysis depth + gap layer
     - [ ] **N-gram mining** — frequent uni/bi/tri-grams from descriptions → surface skills missing from taxonomy → promote into skills.yaml — _why leaf: extract + review_  (needs clean store w/ real data)
     - [ ] **Multilingual taxonomy extension** — add German/Spanish aliases (and remote keywords: `homeoffice`, `teletrabajo`/`remoto`) to skills.yaml so DE/ES postings stop under-matching — _why leaf: data entry, matching already handles aliases_  (motivated by EU rebuild: ~24% overall match, DE 23% / ES 22%)
@@ -101,22 +100,23 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 6. [x] Dictionary skill extraction
 7. [x] First analysis + chart  ← **M1 ships: end-to-end top-skills answer**
 8. [x] Source adapter contract
-9. [ ] Remotive fetcher
-10. [ ] WeWorkRemotely fetcher
-11. [ ] RemoteOK fetcher
-12. [ ] Per-source normalization mappers
-13. [ ] Cross-source dedup (exact)  ← **M2 ships: multi-source dataset**
-14. [ ] N-gram mining
-14b. [ ] Multilingual taxonomy extension (DE/ES aliases) _(no deps — additive to skills.yaml)_
-15. [ ] Part-time vs full-time comparison
-16. [ ] Demand ranking by role
-17. [ ] my_skills gap layer  ← **M3 ships: personalized learn-next list (the core goal)**
-18. [ ] Skill co-occurrence _(stretch)_
-19. [ ] README
-20. [ ] Notebook narrative
-21. [ ] Reproducibility
-22. [ ] Repo hygiene  ← **M4 ships: portfolio-ready**
-23. [ ] Incremental run mode
-24. [ ] Scheduling
-25. [ ] Trend tracking
-26. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
+9. [x] Remotive fetcher + mapper  ← **M2 primary** (full descriptions + clean part-time tag)
+10. [ ] Cross-source dedup (exact)  ← **M2 ships: Adzuna + Remotive multi-source dataset**
+11. [ ] N-gram mining
+11b. [ ] Multilingual taxonomy extension (DE/ES aliases) _(no deps — additive to skills.yaml)_
+12. [ ] Part-time vs full-time comparison
+13. [ ] Demand ranking by role
+14. [ ] my_skills gap layer  ← **M3 ships: personalized learn-next list (the core goal)**
+15. [ ] Skill co-occurrence _(stretch)_
+16. [ ] README
+17. [ ] Notebook narrative
+18. [ ] Reproducibility
+19. [ ] Repo hygiene  ← **M4 ships: portfolio-ready**
+20. [ ] Incremental run mode
+21. [ ] Scheduling
+22. [ ] Trend tracking
+23. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
+
+_Optional remote-board sources (post-M2, add volume — not required to ship M2):_
+- [ ] RemoteOK fetcher + mapper _(JSON whole-feed; employment type only in `tags`; client-side role filter)_
+- [ ] WeWorkRemotely fetcher + mapper _(category RSS; no employment-type field; client-side role filter)_
