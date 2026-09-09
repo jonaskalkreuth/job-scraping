@@ -45,8 +45,8 @@
     - [ ] **Reproducibility** — pinned requirements.txt, config documented, one-command run — _why leaf: packaging_
     - [ ] **Repo hygiene** — .gitignore, no secrets/data committed, structure, license — _why leaf: cleanup_
   - M5 — Phase-B monitoring (incremental + dashboard)
-    - [ ] **Incremental run mode** — re-run skips existing dedup keys, appends new postings w/ first_seen date — _why leaf: dedup logic_  (needs M1/M2 storage)
-    - [ ] **Scheduling** — cron/manual weekly trigger — _why leaf: config_  (needs incremental mode)
+    - [x] **Incremental run mode** — re-run skips existing dedup keys, appends new postings w/ first_seen date — _why leaf: dedup logic_  (needs M1/M2 storage)  ✅ **The key is `id`, not `dedup_key` — the leaf text was wrong.** Step 10 deliberately left `dedup_key` without a UNIQUE constraint so two genuine openings sharing a title survive, which also makes it unusable as an upsert key. `id` already carries PRIMARY KEY, so `clean.load()` swaps `INSERT OR IGNORE` for `ON CONFLICT(id) DO UPDATE SET last_seen`. A re-seen posting is no longer a duplicate to drop — it is evidence the listing is still open, and M1 was throwing that away. Two columns, `first_seen`/`last_seen`, both seeded from `fetched_at`; they live in `TRACKING_COLUMNS` **outside** `NormalizedPosting` because no source sends them — they are bookkeeping facts the store learns by watching an id across runs, and putting them in the dataclass would have made `schema.py` lie about what a source provides. `load()` now returns `(seen, inserted, refreshed)`. The 1423 existing rows were migrated with `ALTER TABLE` + a backfill from `fetched_at` rather than a rebuild — raw is complete enough to rebuild today, but the ALTER path is the one that still works in week 26. **Verified on real data:** re-running over unchanged raw inserted 0 and left a row-by-row diff of every timestamp identical; a genuine second fetch 11 minutes later read 4968 records and inserted 0. **270 postings first seen on 30 June were still listed on 9 September**, which is the mechanism step 22 depends on, proven rather than assumed. First tests in the repo land here — `tests/test_clean_incremental.py`, `pytest==9.1.1` pinned into both requirement files. _Caveats: `refreshed` counts raw records, not distinct postings, so a posting in three runs contributes two — it is a run health signal, not an open-listings count. And the clean layer still re-parses the entire raw zone every run, which is what makes `last_seen` correct (files sort chronologically, newest write wins) but means read cost grows linearly — 1617 records in June, 6643 by the third run on 9 September._
+    - [x] **Scheduling** — cron/manual weekly trigger — _why leaf: config_  (needs incremental mode)  ✅ launchd, not cron — it is what macOS actually supervises, and it catches up a missed calendar interval on wake instead of silently skipping a closed-laptop Monday. Three pieces: `jobskills/run_weekly.py` chains fetch → store_raw → clean → extract and prints one line per stage, because a log file is the only thing anyone ever sees of an unattended run; `run_weekly.sh` supplies the absolute paths launchd does not provide and `exec`s both streams into `data/logs/weekly.log` (gitignored); `~/Library/LaunchAgents/com.jonas.jobscraper.plist` fires Monday 09:00. The wrapper calls `venv/bin/python` directly rather than sourcing `activate` — the venv interpreter sets its own `sys.prefix`, and activate scripts read unset variables that trip `set -u`. **Verified under launchd, not just by hand** (`launchctl kickstart`): empty stderr, exit code 0, a complete run in the log. That check is the point — launchd hands the job a bare environment with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and no shell profile, which is the usual way a scheduled job dies quietly. _Caveats: `run_weekly.sh` hardcodes an absolute home path, so the repo is not portable without editing it; `launchctl load` is deprecated on Ventura and reports both "file missing" and "already loaded" as the same `Input/output error` — use `bootstrap`/`bootout`. Three runs on 9 September left three near-identical snapshots in the raw zone; harmless to the upsert, but each costs ~2.8 MB and adds to the linear re-parse above._
     - [ ] **Trend tracking** — skill demand over time from accumulated snapshots — _why leaf: time-series groupby_  (needs weeks of data)
     - [ ] **Streamlit dashboard** — interactive filters + trend charts — _why leaf: UI build_  (needs trend data)
 
@@ -121,6 +121,8 @@
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
+**Steps 20-21 were pulled forward out of order, ahead of 14-19.** They are the only steps whose input cannot be backfilled: trend data accrues one Monday at a time, so every week the scheduler is not running is a permanent hole in step 22. Everything from 14 to 19 is analysis or writing over data that already exists and loses nothing by waiting.
+
 1. [x] Project scaffold
 2. [x] Skills taxonomy seed _(no deps — can run alongside scaffold)_
 3. [x] Adzuna fetcher
@@ -141,8 +143,8 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 17. [ ] Notebook narrative
 18. [ ] Reproducibility
 19. [ ] Repo hygiene  ← **M4 ships: portfolio-ready**
-20. [ ] Incremental run mode
-21. [ ] Scheduling
+20. [x] Incremental run mode  ← upsert on `id` + `first_seen`/`last_seen`; first tests in the repo
+21. [x] Scheduling  ← launchd, Mondays 09:00; verified in launchd's own environment
 22. [ ] Trend tracking
 23. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
 

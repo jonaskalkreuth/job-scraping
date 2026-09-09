@@ -7,6 +7,10 @@ data/raw/
 data/*.db
 data/jobs.db
 
+# Scheduler output. launchd throws stderr away, so run_weekly.sh appends both
+# streams here; it is a local operational record, not repo content.
+data/logs/
+
 # Python runtime / build cruft.
 venv/
 .venv/
