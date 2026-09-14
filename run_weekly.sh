@@ -12,12 +12,22 @@ REPO="/Users/Jonny/Projects/job-scraping"
 LOG_DIR="$REPO/data/logs"
 
 mkdir -p "$LOG_DIR"
+
+# Run once per ISO week, the first time the Mac is on. launchd starts this
+# hourly and at login; a shut-down Mac misses a calendar slot for good.
+STAMP="$LOG_DIR/last_success_week"
+THIS_WEEK="$(date +%G-W%V)"
+if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$THIS_WEEK" ]]; then
+    exit 0
+fi
+
 # Append both streams: a traceback is the most important thing this file can
 # ever contain, and launchd throws stderr away otherwise.
 exec >> "$LOG_DIR/weekly.log" 2>&1
 
 cd "$REPO"
 "$REPO/venv/bin/python" -m jobskills.run_weekly
+echo "$THIS_WEEK" > "$STAMP"
 
 
 # --- Backup -----------------------------------------------------------------
