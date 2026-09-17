@@ -17,6 +17,7 @@ one more `Source` subclass and appending it to `SOURCES`.
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 import json
 import re
@@ -25,6 +26,7 @@ from jobskills import config
 from jobskills import fetch_adzuna
 from jobskills import fetch_remotive
 from jobskills import fetch_remoteok
+from jobskills import fetch_wwr
 from jobskills.schema import NormalizedPosting
 
 
@@ -342,6 +344,96 @@ class RemoteOKSource(Source):
             salary_is_predicted=None,
             description=_html_to_text(p.get("description") or ""),
             created=p.get("date"),
+            remote="remote",  # it's a remote board; no need to infer from text
+            fetched_at=raw.get("fetched_at"),
+        )
+
+
+# --- WeWorkRemotely ---
+class WWRSource(Source):
+    """WeWorkRemotely, a keyless remote-jobs board read via its RSS feed.
+
+    fetch() pulls the one all-jobs feed and keeps only items whose job title
+    matches a ROLE_QUERIES phrase (the feed has no search). map() splits the
+    "Company: Job Title" item title, derives an id from the guid slug, and
+    strips the HTML description like Remotive's.
+    """
+
+    name = "wwr"
+
+    @staticmethod
+    def _split_title(raw_title: str) -> tuple[str | None, str]:
+        """Split WWR's "Company: Job Title" on the FIRST ": ".
+
+        The first, because job titles can contain colons themselves. No
+        separator → no company, and the whole string is the title.
+        """
+        company, sep, title = raw_title.partition(": ")
+        if not sep:
+            return None, raw_title.strip()
+        return company.strip() or None, title.strip()
+
+    @staticmethod
+    def _contract_time(job_type: str | None) -> str | None:
+        """Map WWR's `type` ("Full-Time", "Part-Time", ...) onto contract_time.
+
+        Lowercase + hyphen→underscore lands "Full-Time" on Adzuna's "full_time",
+        so step 12's part-time comparison groups on one column across sources.
+        Other values pass through in the same shape; "" / missing → None.
+        """
+        job_type = (job_type or "").strip().lower().replace("-", "_")
+        return job_type or None
+
+    def fetch(self) -> list[dict]:
+        """One raw record per role-matching item, tagged with the matched role."""
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        records: list[dict] = []
+        for item in fetch_wwr.fetch_all():
+            # Match on the job-title part only, so a company name like
+            # "Data Analyst Labs" can't make an off-target role match.
+            _, title = self._split_title(item.get("title") or "")
+            role = match_role(title)
+            if role is None:
+                continue
+            records.append(
+                {
+                    "source": self.name,
+                    "role_query": role,
+                    "fetched_at": fetched_at,
+                    "posting": item,  # stored whole, untouched
+                }
+            )
+        return records
+
+    def map(self, raw: dict) -> NormalizedPosting:
+        """Flatten one WWR raw record into a NormalizedPosting."""
+        p = raw["posting"]
+        company, title = self._split_title(p.get("title") or "")
+        # The jobs table keys on `id` alone, so prefix it to keep WWR ids from
+        # colliding with another source's. The guid is the posting URL; its last
+        # path segment is a stable, human-readable slug.
+        slug = (p.get("guid") or "").rstrip("/").rsplit("/", 1)[-1]
+        pub_date = p.get("pubDate")
+
+        return NormalizedPosting(
+            source=raw.get("source", self.name),
+            id=f"wwr-{slug}",
+            role_query=raw.get("role_query"),
+            source_region=None,  # global remote board — no geographic scope
+            title=title,
+            company=company,
+            location=p.get("region") or None,  # e.g. "Anywhere in the World"
+            area=None,  # WWR has no structured area breakdown
+            category=p.get("category") or None,
+            contract_time=self._contract_time(p.get("type")),
+            contract_type=None,  # WWR folds everything into `type`
+            salary_min=None,  # the feed carries no salary
+            salary_max=None,
+            salary_is_predicted=None,
+            description=_html_to_text(p.get("description") or ""),
+            # pubDate is RFC 822 ("Tue, 15 Sep 2026 12:30:00 +0000"); ISO 8601
+            # matches the other sources' `created`.
+            created=parsedate_to_datetime(pub_date).isoformat() if pub_date else None,
             remote="remote",  # it's a remote board; no need to infer from text
             fetched_at=raw.get("fetched_at"),
         )
