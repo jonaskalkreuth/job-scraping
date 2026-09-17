@@ -19,9 +19,7 @@ Two differences from Adzuna worth knowing:
 
 import time
 
-import requests
-
-from jobskills import config
+from jobskills import config, http
 
 # Remotive's single search endpoint. `search` matches title + tags; `limit`
 # caps how many of the matches it returns.
@@ -33,37 +31,9 @@ def _params(role: str) -> dict:
     return {"search": role, "limit": config.REMOTIVE_LIMIT}
 
 
-def _get(url: str, params: dict) -> dict:
-    """GET with timeout, UA, and retry on transient failures.
-
-    Same policy as the Adzuna fetcher (deliberately duplicated to keep each
-    fetcher self-contained — factor into a shared helper if a 3rd source lands):
-    retry 429/5xx with backoff honoring Retry-After; fail fast on other 4xx.
-    """
-    headers = {"User-Agent": config.USER_AGENT}
-
-    for attempt in range(config.MAX_RETRIES + 1):
-        resp = requests.get(
-            url, params=params, headers=headers, timeout=config.REQUEST_TIMEOUT
-        )
-
-        if resp.status_code == 200:
-            return resp.json()
-
-        transient = resp.status_code == 429 or resp.status_code >= 500
-        if not transient or attempt == config.MAX_RETRIES:
-            resp.raise_for_status()
-
-        retry_after = resp.headers.get("Retry-After")
-        wait = float(retry_after) if retry_after else 2.0**attempt
-        time.sleep(wait)
-
-    raise RuntimeError("retry loop exited without returning or raising")
-
-
 def fetch_role(role: str) -> list[dict]:
     """Fetch one role's matching postings. Returns the raw `jobs` list."""
-    data = _get(_BASE_URL, _params(role))
+    data = http.get(_BASE_URL, _params(role)).json()
     return data.get("jobs", [])
 
 

@@ -12,9 +12,7 @@ text. See the design-tree "Adzuna fetcher" leaf.
 
 import time
 
-import requests
-
-from jobskills import config
+from jobskills import config, http
 
 # Adzuna's search endpoint is country-scoped and page is part of the path:
 #   /v1/api/jobs/{country}/search/{page}
@@ -36,37 +34,6 @@ def _params(role: str) -> dict:
     }
 
 
-def _get(url: str, params: dict) -> dict:
-    """GET one page with timeout, UA, and retry on transient failures.
-
-    Retries on 429 (rate limited) and 5xx (server) with exponential backoff,
-    honoring a Retry-After header when the server sends one. A 4xx other than
-    429 (e.g. 400/401) is a bug in our request, not transient, so we fail fast.
-    """
-    headers = {"User-Agent": config.USER_AGENT}
-
-    for attempt in range(config.MAX_RETRIES + 1):
-        resp = requests.get(
-            url, params=params, headers=headers, timeout=config.REQUEST_TIMEOUT
-        )
-
-        if resp.status_code == 200:
-            return resp.json()
-
-        transient = resp.status_code == 429 or resp.status_code >= 500
-        if not transient or attempt == config.MAX_RETRIES:
-            # Non-retryable, or we're out of attempts: surface the real reason.
-            resp.raise_for_status()
-
-        # Back off: prefer the server's Retry-After, else exponential (1,2,4...).
-        retry_after = resp.headers.get("Retry-After")
-        wait = float(retry_after) if retry_after else 2.0**attempt
-        time.sleep(wait)
-
-    # Unreachable: the loop either returns or raises. Guards against future edits.
-    raise RuntimeError("retry loop exited without returning or raising")
-
-
 def fetch_role(country: str, role: str) -> list[dict]:
     """Page through one role on one country board, returning each page's raw JSON.
 
@@ -75,7 +42,7 @@ def fetch_role(country: str, role: str) -> list[dict]:
     """
     pages: list[dict] = []
     for page in range(1, config.MAX_PAGES + 1):
-        data = _get(_build_url(country, page), _params(role))
+        data = http.get(_build_url(country, page), _params(role)).json()
         pages.append(data)
 
         results = data.get("results", [])
@@ -108,7 +75,7 @@ if __name__ == "__main__":
     # connectivity before we wire this into storage. Needs a real .env.
     country = config.ADZUNA_COUNTRIES[0]
     role = config.ROLE_QUERIES[0]
-    data = _get(_build_url(country, 1), _params(role))
+    data = http.get(_build_url(country, 1), _params(role)).json()
     results = data.get("results", [])
     print(f"country={country!r} role={role!r}: {len(results)} results on page 1 "
           f"(total available: {data.get('count', '?')})")

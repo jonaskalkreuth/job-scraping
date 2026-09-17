@@ -80,6 +80,24 @@ def derive_remote(title: str, description: str, location: str) -> str:
     return "unknown"
 
 
+# --- Role matching ----------------------------------------------------------
+# RemoteOK and WeWorkRemotely have no server-side search: they return their
+# whole feed, so role filtering happens on our side, against the title. Whole
+# words only, so "Metadata Analyst" doesn't count as a "data analyst".
+_ROLE_PATTERNS = [
+    (role, re.compile(rf"\b{re.escape(role)}\b", re.IGNORECASE))
+    for role in config.ROLE_QUERIES
+]
+
+
+def match_role(title: str) -> str | None:
+    """Return the first ROLE_QUERIES phrase found in the title, else None."""
+    for role, pattern in _ROLE_PATTERNS:
+        if pattern.search(title):
+            return role
+    return None
+
+
 class AdzunaSource(Source):
     """Adzuna, retrofitted onto the Source contract.
 
