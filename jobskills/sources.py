@@ -24,6 +24,7 @@ import re
 from jobskills import config
 from jobskills import fetch_adzuna
 from jobskills import fetch_remotive
+from jobskills import fetch_remoteok
 from jobskills.schema import NormalizedPosting
 
 
@@ -272,6 +273,75 @@ class RemotiveSource(Source):
             salary_is_predicted=None,
             description=_html_to_text(p.get("description") or ""),
             created=p.get("publication_date"),
+            remote="remote",  # it's a remote board; no need to infer from text
+            fetched_at=raw.get("fetched_at"),
+        )
+
+
+# --- RemoteOK ---------------------------------------------------------------
+def _remoteok_salary(value: str | None) -> float | None:
+    """RemoteOK sends salaries as strings where "0" means "not given".
+
+    Treating "0" as a real salary would drag every salary average toward zero,
+    so "0", "" and missing all become None.
+    """
+    amount = float(value or 0)
+    return amount or None
+
+
+class RemoteOKSource(Source):
+    """RemoteOK, a keyless remote board with no server-side search.
+
+    fetch() pulls the whole feed once and keeps only postings whose title
+    matches a configured role; the matched phrase becomes role_query. map()
+    mirrors RemotiveSource: remote by definition, HTML stripped to text.
+    """
+
+    name = "remoteok"
+
+    def fetch(self) -> list[dict]:
+        """One raw record per role-matching posting in the feed."""
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        records: list[dict] = []
+        for job in fetch_remoteok.fetch_all():
+            role = match_role(job.get("position") or "")
+            if role is None:
+                continue  # ~97% of the feed is off-target roles
+            records.append(
+                {
+                    "source": self.name,
+                    "role_query": role,
+                    "fetched_at": fetched_at,
+                    "posting": job,  # stored whole, untouched
+                }
+            )
+        return records
+
+    def map(self, raw: dict) -> NormalizedPosting:
+        """Flatten one RemoteOK raw record into a NormalizedPosting."""
+        p = raw["posting"]
+        # Employment type exists only as a free-form tag, not a field.
+        tags = [t.lower() for t in p.get("tags") or []]
+
+        return NormalizedPosting(
+            source=raw.get("source", self.name),
+            # The jobs table keys on id alone, and RemoteOK ids share Remotive's
+            # numeric range; the prefix keeps the two from colliding.
+            id=f"remoteok-{p.get('id')}",
+            role_query=raw.get("role_query"),
+            source_region=None,  # global remote board — no geographic scope
+            title=(p.get("position") or "").strip(),
+            company=(p.get("company") or "").strip() or None,
+            location=(p.get("location") or "").strip() or None,
+            area=None,
+            category=None,  # tags are free-form, not a category
+            contract_time="full_time" if "full time" in tags else None,
+            contract_type=None,
+            salary_min=_remoteok_salary(p.get("salary_min")),
+            salary_max=_remoteok_salary(p.get("salary_max")),
+            salary_is_predicted=None,
+            description=_html_to_text(p.get("description") or ""),
+            created=p.get("date"),
             remote="remote",  # it's a remote board; no need to infer from text
             fetched_at=raw.get("fetched_at"),
         )
