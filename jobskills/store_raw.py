@@ -54,8 +54,20 @@ def run(srcs: list[sources.Source] | None = None) -> tuple[Path, int]:
     """Fetch every registered source and write all records to one run file."""
     srcs = srcs if srcs is not None else sources.SOURCES
     all_records: list[dict] = []
+    failed = 0
     for src in srcs:
-        all_records.extend(src.fetch())
+        # One failing source must not sink the run. WWR sits behind Cloudflare,
+        # and one 403 there must not cost a week of Adzuna data, which cannot be
+        # recollected. Print the error and carry on with the other sources.
+        try:
+            all_records.extend(src.fetch())
+        except Exception as e:
+            failed += 1
+            print(f"fetch    {src.name} failed: {e!r}")
+    # Every source failing is a broken run, not an empty week — raise so the
+    # log shows a failure instead of a zero-posting success.
+    if srcs and failed == len(srcs):
+        raise RuntimeError(f"all {failed} sources failed to fetch")
     return store_raw(all_records)
 
 

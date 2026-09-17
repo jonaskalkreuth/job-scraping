@@ -349,7 +349,7 @@ class RemoteOKSource(Source):
         )
 
 
-# --- WeWorkRemotely ---
+# --- WeWorkRemotely ---------------------------------------------------------
 class WWRSource(Source):
     """WeWorkRemotely, a keyless remote-jobs board read via its RSS feed.
 
@@ -443,5 +443,5 @@ class WWRSource(Source):
 # it to pull raw data; the clean layer uses BY_NAME to dispatch each raw record
 # back to the source that knows how to map it. 4 known sources don't justify
 # decorator auto-registration or entry-points — an explicit list is legible.
-SOURCES: list[Source] = [AdzunaSource(), RemotiveSource()]
+SOURCES: list[Source] = [AdzunaSource(), RemotiveSource(), RemoteOKSource(), WWRSource()]
 BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}
