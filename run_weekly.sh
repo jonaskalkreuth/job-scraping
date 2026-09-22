@@ -13,8 +13,26 @@ LOG_DIR="$REPO/data/logs"
 
 mkdir -p "$LOG_DIR"
 
-# Run once per ISO week, the first time the Mac is on. launchd starts this
-# hourly and at login; a shut-down Mac misses a calendar slot for good.
+# Only one run at a time. The stamp below is written after the pipeline
+# succeeds, so it marks a finished run and cannot keep a second one out of a
+# run already in progress — two triggers minutes apart both got through on
+# 22 Sep. mkdir is the atomic test-and-set here; flock is not on macOS.
+#
+# A lock left behind by a SIGKILL or a power cut would silently stop every
+# later run — the same "looks armed, does nothing" failure this whole script
+# keeps hitting. A run takes about four minutes, so anything older than an
+# hour is wreckage, not a live run.
+LOCK="$LOG_DIR/.lock"
+if [[ -d "$LOCK" ]] && [[ -z "$(find "$LOCK" -maxdepth 0 -mmin -60)" ]]; then
+    rmdir "$LOCK" 2>/dev/null || true
+fi
+if ! mkdir "$LOCK" 2>/dev/null; then
+    exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+# Run once per ISO week, the first time the Mac is on. launchd starts this at
+# login and on a calendar slot; a shut-down Mac misses a calendar slot for good.
 STAMP="$LOG_DIR/last_success_week"
 THIS_WEEK="$(date +%G-W%V)"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$THIS_WEEK" ]]; then
