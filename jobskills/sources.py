@@ -36,9 +36,15 @@ class Source(ABC):
     Concrete sources set `name` (a class attribute) and implement both methods.
     Leaving either method out makes the subclass abstract — instantiating it
     raises TypeError, so a forgotten method fails loudly at wiring time.
+
+    `critical` marks a source the run cannot do without. The remote boards
+    contribute a posting or two each, so losing one is a quiet week; losing
+    Adzuna is losing the run. store_raw reports a failed critical source so the
+    caller can decline to claim the week — see run_weekly.sh.
     """
 
     name: str
+    critical: bool = False
 
     @abstractmethod
     def fetch(self) -> list[dict]:
@@ -110,6 +116,8 @@ class AdzunaSource(Source):
     """
 
     name = "adzuna"
+    # ~97% of every run's postings. A run without it is not a thin week.
+    critical = True
 
     def fetch(self) -> list[dict]:
         """Fetch every configured role × board, one raw record per posting.

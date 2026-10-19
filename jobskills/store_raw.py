@@ -50,11 +50,25 @@ def store_raw(records: list[dict], path: Path | None = None) -> tuple[Path, int]
     return path, n
 
 
-def run(srcs: list[sources.Source] | None = None) -> tuple[Path, int]:
-    """Fetch every registered source and write all records to one run file."""
+def run(
+    srcs: list[sources.Source] | None = None,
+) -> tuple[Path, int, list[sources.Source]]:
+    """Fetch every registered source and write all records to one run file.
+
+    Returns (path, n_written, failed) where `failed` holds the Source objects
+    that raised — the objects, not their names, so the caller can ask each one
+    whether it was `critical` without a lookup through the global registry
+    (which would be wrong for any source list passed in here explicitly).
+
+    Whatever was fetched is always written first: a run that lost Adzuna still
+    collected real postings from the remote boards, and the raw zone is
+    append-only, so there is no reason to throw them away. Reporting `failed`
+    rather than raising is what lets the caller keep the partial data and still
+    decline to call the week done.
+    """
     srcs = srcs if srcs is not None else sources.SOURCES
     all_records: list[dict] = []
-    failed = 0
+    failed: list[sources.Source] = []
     for src in srcs:
         # One failing source must not sink the run. WWR sits behind Cloudflare,
         # and one 403 there must not cost a week of Adzuna data, which cannot be
@@ -62,17 +76,18 @@ def run(srcs: list[sources.Source] | None = None) -> tuple[Path, int]:
         try:
             all_records.extend(src.fetch())
         except Exception as e:
-            failed += 1
+            failed.append(src)
             print(f"fetch    {src.name} failed: {e!r}")
     # Every source failing is a broken run, not an empty week — raise so the
     # log shows a failure instead of a zero-posting success.
-    if srcs and failed == len(srcs):
-        raise RuntimeError(f"all {failed} sources failed to fetch")
-    return store_raw(all_records)
+    if srcs and len(failed) == len(srcs):
+        raise RuntimeError(f"all {len(failed)} sources failed to fetch")
+    path, n = store_raw(all_records)
+    return path, n, failed
 
 
 if __name__ == "__main__":
     # End-to-end: fetch every registered source, then persist to data/raw/.
     # Needs live credentials (Adzuna keys in .env).
-    path, n = run()
-    print(f"wrote {n} postings -> {path}")
+    path, n, failed = run()
+    print(f"wrote {n} postings -> {path}" + (f" ({len(failed)} source(s) failed)" if failed else ""))

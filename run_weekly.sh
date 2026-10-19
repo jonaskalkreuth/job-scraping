@@ -44,8 +44,20 @@ fi
 exec >> "$LOG_DIR/weekly.log" 2>&1
 
 cd "$REPO"
-"$REPO/venv/bin/python" -m jobskills.run_weekly
-echo "$THIS_WEEK" > "$STAMP"
+# Exit 3 means a critical source failed (see jobskills/run_weekly.py). The
+# postings it did collect are already stored, so carry on to the backup — but
+# leave the stamp alone. An unclaimed week is retried by the next of the plist's
+# six calendar slots (Mon/Wed/Fri, 09:00 and 15:00) or the next boot, so the run
+# self-heals without anyone watching. Not hourly: StartInterval was tried and
+# removed because macOS coalesces interval timers across sleep.
+# `|| rc=$?` keeps `set -e` from killing us first, which would skip the backup.
+rc=0
+"$REPO/venv/bin/python" -m jobskills.run_weekly || rc=$?
+if [[ $rc -eq 0 ]]; then
+    echo "$THIS_WEEK" > "$STAMP"
+elif [[ $rc -ne 3 ]]; then
+    exit $rc
+fi
 
 
 # --- Backup -----------------------------------------------------------------
@@ -83,3 +95,8 @@ elif "$GIT" commit -q -m "snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 else
     echo "backup   FAILED — snapshot not pushed"
 fi
+
+# Surface the degraded code after the backup, not instead of it. Exiting 3 here
+# is what makes `run_weekly.sh; echo "exit=$?"` honest at a terminal: a run that
+# lost Adzuna must not report success just because the backup worked.
+exit $rc
