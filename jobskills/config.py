@@ -69,6 +69,13 @@ REMOTIVE_LIMIT: int = 100
 RESULTS_PER_PAGE: int = 50
 MAX_PAGES: int = 5
 
+# Fraction of Adzuna's country×role fetches that must complete for the run to
+# count as a good week. Below this the source raises, which makes the run
+# DEGRADED and leaves the ISO week unclaimed for the next launchd slot to retry.
+# 0.8 is 12 of 15: the five role queries overlap heavily, so losing one or two
+# costs few unique postings, while a real outage still trips the threshold.
+ADZUNA_MIN_COVERAGE: float = 0.8
+
 # HTTP politeness + resilience for the fetcher.
 # Identify ourselves honestly (not a browser spoof) so the API owner can see
 # who's calling; a contact URL is good etiquette for any scraper/API client.

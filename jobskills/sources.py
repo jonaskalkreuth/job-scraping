@@ -126,10 +126,24 @@ class AdzunaSource(Source):
         we crack each page's "results" envelope here (an Adzuna-specific shape,
         so it belongs to the Adzuna source, not the generic store) and tag every
         posting with its provenance. One fetched_at stamp per run.
+
+        fetch_all confines a failure to its own country×role rather than losing
+        the lot, so this is where we decide whether what survived is a week's
+        data. Too thin and we raise: `critical` then makes the run DEGRADED and
+        the week stays unclaimed, so a later slot retries. Raising discards these
+        partial records, which is the deliberate trade — the retry will refetch
+        them, and keeping them would mean plumbing coverage through Source.
         """
+        quads, attempted, complete = fetch_adzuna.fetch_all()
+        if attempted and complete / attempted < config.ADZUNA_MIN_COVERAGE:
+            raise RuntimeError(
+                f"only {complete}/{attempted} country×role fetches completed "
+                f"(need {config.ADZUNA_MIN_COVERAGE:.0%})"
+            )
+
         fetched_at = datetime.now(timezone.utc).isoformat()
         records: list[dict] = []
-        for region, role, page, page_json in fetch_adzuna.fetch_all():
+        for region, role, page, page_json in quads:
             for posting in page_json.get("results", []):
                 records.append(
                     {
