@@ -15,6 +15,7 @@
 - **Repo** → lean structured package; notebook imports from it. _Why: "engineer not bootcamp grad" signal; reruns cleanly for Phase B._
 - **Build order** → tracer bullet, Adzuna end-to-end first, then add sources. _Why: real end-to-end answer in session 1, validates every stage before investing in more sources._
 - **No PRD; git from day 1** → README (M4 leaf) is the portfolio doc; git init in scaffold, GitHub repo created when M1 ships. _Why: PRD adds no value for a solo portfolio project; clean per-leaf commit history is itself a portfolio signal; secrets/data must never be committed._
+- **SQL depth project** → M6, inside this repo, written in SQL against DuckDB over a closed copy of `jobs.db`. _Why: the scraper's accumulated history is data nobody else has; one repo gives the SQL proof, the market research and the "why I targeted these roles" story._
 
 ## Tree
 - Job-listing skills-analysis scraper
@@ -49,6 +50,13 @@
     - [x] **Scheduling** — cron/manual weekly trigger — _why leaf: config_  (needs incremental mode)  ✅ launchd, not cron — it is what macOS actually supervises, and it catches up a missed calendar interval on wake instead of silently skipping a closed-laptop Monday. Three pieces: `jobskills/run_weekly.py` chains fetch → store_raw → clean → extract and prints one line per stage, because a log file is the only thing anyone ever sees of an unattended run; `run_weekly.sh` supplies the absolute paths launchd does not provide and `exec`s both streams into `data/logs/weekly.log` (gitignored); `~/Library/LaunchAgents/com.jonas.jobscraper.plist` fires Monday 09:00. The wrapper calls `venv/bin/python` directly rather than sourcing `activate` — the venv interpreter sets its own `sys.prefix`, and activate scripts read unset variables that trip `set -u`. **Verified under launchd, not just by hand** (`launchctl kickstart`): empty stderr, exit code 0, a complete run in the log. That check is the point — launchd hands the job a bare environment with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and no shell profile, which is the usual way a scheduled job dies quietly. _Caveats: `run_weekly.sh` hardcodes an absolute home path, so the repo is not portable without editing it; `launchctl load` is deprecated on Ventura and reports both "file missing" and "already loaded" as the same `Input/output error` — use `bootstrap`/`bootout`. Three runs on 9 September left three near-identical snapshots in the raw zone; harmless to the upsert, but each costs ~2.8 MB and adds to the linear re-parse above._
     - [ ] **Trend tracking** — skill demand over time from accumulated snapshots — _why leaf: time-series groupby_  (needs weeks of data)
     - [ ] **Streamlit dashboard** — interactive filters + trend charts — _why leaf: UI build_  (needs trend data)
+  - M6 — SQL depth (DuckDB)
+    - [ ] **Snapshot + DuckDB setup** — copy a closed `jobs.db`, attach it in DuckDB, reconcile row counts against the source
+    - [ ] **Data-quality audit in SQL** — `dedup_key` duplicates, salary coverage, remote mostly `unknown`, scrape-gap calendar  (needs snapshot)
+    - [ ] **Business question** — Swiss vs DE/ES skill demand via conditional aggregation + ranking  (needs audit). _Differs from step 12: compares countries, not roles, and in SQL, not pandas._
+    - [ ] **Posting lifetime section** — `first_seen`/`last_seen`, gaps and islands over scrape weeks; missed scrapes (none 30 Jun–9 Sep, thin weeks like 28 Sep) are the main caveat  (needs audit). _Overlaps step 22: trend tracking could be done here in SQL and only displayed by the dashboard._
+    - [ ] **SQL write-up** — README section: question, data, cleaning, result, how to run, limits
+    - [ ] **Defend** — be able to explain every query and judgement call cold
 
 ## Implementation decisions (per-step, from learn-while-building)
 
@@ -147,6 +155,12 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 21. [x] Scheduling  ← launchd, Mondays 09:00; verified in launchd's own environment
 22. [ ] Trend tracking
 23. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
+24. [ ] Snapshot + DuckDB setup
+25. [ ] Data-quality audit in SQL
+26. [ ] Business question: Swiss vs DE/ES skill demand
+27. [ ] Posting lifetime section
+28. [ ] SQL write-up
+29. [ ] Defend  ← **M6 ships: SQL depth project**
 
 _Optional remote-board sources (post-M2, add volume — not required to ship M2):_
 - [x] RemoteOK fetcher + mapper _(JSON whole-feed; employment type only in `tags`; client-side role filter)_  ← 3 postings on the first live run
