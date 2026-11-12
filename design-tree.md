@@ -52,9 +52,9 @@
     - [ ] **Streamlit dashboard** — interactive filters + trend charts — _why leaf: UI build_  (needs trend data)
   - M6 — SQL depth (DuckDB)
     - [x] **Snapshot + DuckDB setup** — copy a closed `jobs.db`, attach it in DuckDB, reconcile row counts against the source  ✅ DuckDB 2.0.0 pinned. Snapshot `data/snapshots/jobs_2026-11-10.db` (byte-identical copy, read-only, gitignored). `jobskills/sql_runner.py` attaches it `READ_ONLY` + `USE`, so `sql/*.sql` use bare table names. `sql/01_row_counts.sql` reconciles **18/18 counts** against `jobs.db` via `sqlite3` in `notebooks/05_sql.ipynb`: 7,182 jobs, 5,482 skill_hits, 12 fetched dates and 4 regions each summing to 7,182. The source side is cut at `fetched_at < '2026-11-11'`, so the check survives later weekly runs. Fixture `tests/fixtures/seed.sql` + `conftest.py`; 40 tests pass. _Findings for later steps: every date column is ISO text, all `+00:00`, so text sort = time sort; `fetched_at` is the FIRST fetch, so per-date counts mean new postings, not scrape size; the 72 regionless rows are `NULL`, labelled `(none)`. First DuckDB `ATTACH` downloads the sqlite extension (needs network once). Bare `pytest` fails to import `jobskills` (pre-existing); use `python -m pytest` as CI does._
-    - [ ] **Data-quality audit in SQL** — `dedup_key` duplicates, salary coverage, remote mostly `unknown`, scrape-gap calendar  (needs snapshot)
-    - [ ] **Business question** — Swiss vs DE/ES skill demand via conditional aggregation + ranking  (needs audit). _Differs from step 12: compares countries, not roles, and in SQL, not pandas._
-    - [ ] **Posting lifetime section** — `first_seen`/`last_seen`, gaps and islands over scrape weeks; missed scrapes (none 30 Jun–9 Sep, thin weeks like 28 Sep) are the main caveat  (needs audit). _Overlaps step 22: trend tracking could be done here in SQL and only displayed by the dashboard._
+    - [x] **Data-quality audit in SQL** — `dedup_key` duplicates, salary coverage, remote mostly `unknown`, scrape-gap calendar  (needs snapshot)  ✅ Four files `sql/02_audit_{dedup,salary,remote,scrape_calendar}.sql`, each reconciling to 7,182 rows. **Dedup:** 4,501 distinct keys + 2,609 surplus + 72 NULL-key rows = 7,182; 1,040 keys repeat (3,649 rows), none across sources, 674 across scrape dates (Adzuna re-posts under new ids), 53 across regions. **Salary:** 1,230 rows (17.1%), Adzuna only: ES 35.1%, DE 6.4%, CH 3.6%; 8 implausible values; `salary_is_predicted` is always `'0'`. **Remote:** `unknown` on 6,471 rows (90.1%; CH 94.4%, DE 95.0%, ES 85.1%) because Adzuna descriptions stop at ~500 chars. **Calendar:** 20 weeks 29 Jun–9 Nov, 9 missed (6 Jul–31 Aug); week of 28 Sep found 1 posting. Own fixture `tests/fixtures/audit_02.sql`; 45 tests pass. _Findings for later steps: the 72 NULL-key rows are Adzuna rows with no company, not the 72 regionless remote-board rows. Scrape weekdays vary (Tue/Wed/Thu/Sat), so week buckets, not dates, are the time unit._
+    - [x] **Business question** — Swiss vs DE/ES skill demand via conditional aggregation + ranking  (needs audit). _Differs from step 12: compares countries, not roles, and in SQL, not pandas._  ✅ `sql/03_country_skill_demand.sql`: one row per skill with distinct jobs, share and `RANK()` for CH, DE and ES as separate columns, each built with `count(DISTINCT ident) FILTER (WHERE country = …)`. Denominators 861 CH / 1,751 DE / 1,974 ES distinct jobs (from 1,094 / 3,210 / 2,806 rows). Top 2 are the same everywhere (`ai`, `machine learning`). **CH leans to statistics (#6 vs DE #8, ES #22), Java (#13 vs #23/#33) and Spark; it lags on Power BI (#9 vs DE #3, ES #5)**, and ES leans to dbt (#6). Counts reconcile cell by cell against an independent pandas count. **`r` is excluded**: the case-sensitive `\bR\b` matcher mostly hits "R&D" (24 of 35 CH jobs). Test fixture rows live in the test file, which empties the seed tables first, so other steps' seed rows can't shift its answers. _Caveats: shares are floored by Adzuna's 500-char cut and match rates differ (CH 45%, DE 34%, ES 48%), so ranks are the comparison; below the top ~12, counts are under 15 jobs per country; reads raw `jobs`, so step 25's dedup findings may shift the DE denominator._
+    - [x] **Posting lifetime section** — `first_seen`/`last_seen`, gaps and islands over scrape weeks; missed scrapes (none 30 Jun–9 Sep, thin weeks like 28 Sep) are the main caveat  (needs audit). _Overlaps step 22: trend tracking could be done here in SQL and only displayed by the dashboard._  ✅ Three files. `sql/04a_scrape_calendar.sql` runs gaps-and-islands on the **scrape calendar**, not per posting: only the two end points are stored, so a per-posting island analysis is impossible. 28 Sep was a Remotive-only run (Adzuna 503), so a *full scrape* = a date Adzuna returned rows: 11 of 12 dates, 3 week-islands (30 Jun · 9–22 Sep · 5 Oct–10 Nov). `sql/04b_posting_lifetime.sql` gives per-cohort lifetime: 7,182 postings, 1,792 still visible on 10 Nov, 3,708 seen on one date only; median closed lifetime is 0–8 days per cohort. `sql/04c_skill_trends.sql` holds step 22's trend data, new and open postings per full scrape × skill, keeping the 17 skills ever in the top 10 (187 rows); `ai` holds 21–23% of open postings throughout. _Caveats: lifetime means visibility in a fetch capped at 250 per board × role (5 of 15 queries hit the cap), not true lifetime; open counts assume a posting stayed listed between its end points; the match rate rises ~37% → ~46% over time, lifting every share._
     - [ ] **SQL write-up** — README section: question, data, cleaning, result, how to run, limits
     - [ ] **Defend** — be able to explain every query and judgement call cold  _Postponed until after the SQL lessons (decided 2026-11-11); M6 ships after step 28._
 
@@ -132,6 +132,28 @@
 - **Reconciliation** → totals plus per-scrape-date and per-region counts, compared with `jobs.db` read via `sqlite3`. One query, long format (`dimension | key | n`) via `UNION ALL`. _Why: the breakdowns are the slices steps 25–27 analyse; column-level null checks would duplicate step 25's audit._
 - **Test fixture** → `tests/fixtures/seed.sql` (hand-made DDL + inserts) loaded by `conftest.py` into in-memory DuckDB. _Why: test data stays readable as SQL and grows per step; the attach path is already proven by the reconciliation on the real file._
 
+### Step 25 — Data-quality audit in SQL
+- **One file per check** → `02_audit_dedup`, `_salary`, `_remote`, `_scrape_calendar`. _Why: the four checks have different shapes; one `UNION ALL` would force them into one long format and be harder to study._
+- **No cleaning view yet** → the audit reports; it does not rewrite. Analyses identify a posting by `coalesce(dedup_key, 'id:' || id)`, as `mine.py` already does. _Why: steps 26–27 were built in parallel, and a shared `jobs_clean` view would couple them before each knows what it needs._
+- **NULL keys and regions** → NULL-key rows are counted apart, never merged into one group; NULL regions are labelled `(none)` as in step 24. _Why: dropping either hides a fact; merging NULL keys would invent one fake posting._
+- **Implausible salary** → `salary_min = 0 OR salary_max > 500000`, flagged, not removed; no currency conversion (CH is CHF). _Why: 8 rows, a visible caveat costs less than a cleaning rule nobody asked for._
+- **Scrape calendar** → Monday-start weeks from `generate_series`, scrape dates from `first_seen` ∪ `last_seen`. _Why: missed weeks need a row of their own; a scrape is only visible through those two columns._
+- **Own test fixture** → `tests/fixtures/audit_02.sql`, not `seed.sql`. _Why: seed.sql lacks these columns, its row counts are pinned by step 24's test, and steps 26–27 edit it in parallel._
+
+### Step 26 — Business question: Swiss vs DE/ES skill demand
+- **Comparison** → CH, DE and ES as three separate ranked columns, not CH vs pooled DE+ES. _Why: DE and ES differ (dbt 0.9% vs 2.6%), and pooling would weight DE ~47% and hide ES._
+- **Unit** → distinct jobs per country via `ident = coalesce(dedup_key, 'id:' || id)`; a job counts once per country it is posted in, and has a skill if any of its rows does. Denominator includes jobs with no skill hit. _Why: same metric as steps 7 and 12; dedup matters most in DE (one ad posted 198 times)._
+- **Regionless rows** → the 72 remote-board rows are dropped. _Why: no country to compare._
+- **Ranking** → `RANK()` by distinct-job count within each country. _Why: with a fixed denominator, count order = share order; ties share a rank; ranks cancel the per-country match-rate floor._
+- **`r` excluded in SQL** → one `WHERE` line with a comment. _Why: most of its hits are "R&D"; fixing the extractor is out of scope for a frozen snapshot._
+
+### Step 27 — Posting lifetime and trends
+- **Unit of time** → a *full scrape*, a UTC date on which Adzuna returned rows. _Why: on 28 Sep only Remotive ran, so an "open on that date" count would read 891 against ~1,500 on its neighbours._
+- **Gaps and islands** → on the scrape calendar (ISO weeks with a full scrape), not per posting. _Why: only `first_seen`/`last_seen` are stored, so a posting's own gaps are invisible; the calendar is fully observed._
+- **Lifetime** → per first-seen cohort: counts open, seen-once, and median days and full scrapes for closed postings only. _Why: open postings are right-censored, and the 30 Jun cohort's true end is anywhere before 9 Sep._
+- **Trends** → two measures, *new* (exact) and *open* (`first_seen ≤ d ≤ last_seen`, assumes continuous listing), zero-filled per skill, with skills kept by `QUALIFY` when ever in the top 10. _Why: a dashboard reads unbroken series without re-deriving them._
+- **Fixture** → own `tests/fixtures/seed_04_lifetime.sql`, not the shared `seed.sql`. _Why: steps 25–26 edit the shared seed in parallel, which would shift these expected answers._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -162,9 +184,9 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 22. [ ] Trend tracking  ← absorbed by step 27
 23. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
 24. [x] Snapshot + DuckDB setup  ← DuckDB over a frozen 2026-11-10 snapshot; 18/18 counts reconcile
-25. [ ] Data-quality audit in SQL
-26. [ ] Business question: Swiss vs DE/ES skill demand
-27. [ ] Posting lifetime section
+25. [x] Data-quality audit in SQL  ← 2,609 surplus duplicate rows, 17% salary, 90% remote unknown, 9 missed weeks
+26. [x] Business question: Swiss vs DE/ES skill demand  ← three ranked country columns; CH leans to statistics/Java, lags on Power BI
+27. [x] Posting lifetime section  ← gaps-and-islands on the scrape calendar; trends written once in SQL
 28. [ ] SQL write-up  ← **M6 ships: SQL depth project**
 29. [ ] Defend  ← after the SQL lessons
 
