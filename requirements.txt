@@ -8,3 +8,4 @@ PyYAML==6.0.2
 jupyterlab==4.2.5
 scikit-learn==1.9.0  # CountVectorizer backend for n-gram mining (step 11)
 pytest==9.1.1  # test runner; first tests land in step 20 (incremental load)
+duckdb==2.0.0  # SQL depth project (M6, step 24)

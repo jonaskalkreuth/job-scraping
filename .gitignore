@@ -24,3 +24,6 @@ __pycache__/
 
 # OS noise.
 .DS_Store
+
+# Frozen analysis snapshot for M6 (SQL project); same ToS reason as jobs.db.
+data/snapshots/

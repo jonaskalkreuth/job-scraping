@@ -48,15 +48,15 @@
   - M5 — Phase-B monitoring (incremental + dashboard)
     - [x] **Incremental run mode** — re-run skips existing dedup keys, appends new postings w/ first_seen date — _why leaf: dedup logic_  (needs M1/M2 storage)  ✅ **The key is `id`, not `dedup_key` — the leaf text was wrong.** Step 10 deliberately left `dedup_key` without a UNIQUE constraint so two genuine openings sharing a title survive, which also makes it unusable as an upsert key. `id` already carries PRIMARY KEY, so `clean.load()` swaps `INSERT OR IGNORE` for `ON CONFLICT(id) DO UPDATE SET last_seen`. A re-seen posting is no longer a duplicate to drop — it is evidence the listing is still open, and M1 was throwing that away. Two columns, `first_seen`/`last_seen`, both seeded from `fetched_at`; they live in `TRACKING_COLUMNS` **outside** `NormalizedPosting` because no source sends them — they are bookkeeping facts the store learns by watching an id across runs, and putting them in the dataclass would have made `schema.py` lie about what a source provides. `load()` now returns `(seen, inserted, refreshed)`. The 1423 existing rows were migrated with `ALTER TABLE` + a backfill from `fetched_at` rather than a rebuild — raw is complete enough to rebuild today, but the ALTER path is the one that still works in week 26. **Verified on real data:** re-running over unchanged raw inserted 0 and left a row-by-row diff of every timestamp identical; a genuine second fetch 11 minutes later read 4968 records and inserted 0. **270 postings first seen on 30 June were still listed on 9 September**, which is the mechanism step 22 depends on, proven rather than assumed. First tests in the repo land here — `tests/test_clean_incremental.py`, `pytest==9.1.1` pinned into both requirement files. _Caveats: `refreshed` counts raw records, not distinct postings, so a posting in three runs contributes two — it is a run health signal, not an open-listings count. And the clean layer still re-parses the entire raw zone every run, which is what makes `last_seen` correct (files sort chronologically, newest write wins) but means read cost grows linearly — 1617 records in June, 6643 by the third run on 9 September._
     - [x] **Scheduling** — cron/manual weekly trigger — _why leaf: config_  (needs incremental mode)  ✅ launchd, not cron — it is what macOS actually supervises, and it catches up a missed calendar interval on wake instead of silently skipping a closed-laptop Monday. Three pieces: `jobskills/run_weekly.py` chains fetch → store_raw → clean → extract and prints one line per stage, because a log file is the only thing anyone ever sees of an unattended run; `run_weekly.sh` supplies the absolute paths launchd does not provide and `exec`s both streams into `data/logs/weekly.log` (gitignored); `~/Library/LaunchAgents/com.jonas.jobscraper.plist` fires Monday 09:00. The wrapper calls `venv/bin/python` directly rather than sourcing `activate` — the venv interpreter sets its own `sys.prefix`, and activate scripts read unset variables that trip `set -u`. **Verified under launchd, not just by hand** (`launchctl kickstart`): empty stderr, exit code 0, a complete run in the log. That check is the point — launchd hands the job a bare environment with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and no shell profile, which is the usual way a scheduled job dies quietly. _Caveats: `run_weekly.sh` hardcodes an absolute home path, so the repo is not portable without editing it; `launchctl load` is deprecated on Ventura and reports both "file missing" and "already loaded" as the same `Input/output error` — use `bootstrap`/`bootout`. Three runs on 9 September left three near-identical snapshots in the raw zone; harmless to the upsert, but each costs ~2.8 MB and adds to the linear re-parse above._
-    - [ ] **Trend tracking** — skill demand over time from accumulated snapshots — _why leaf: time-series groupby_  (needs weeks of data)
+    - [ ] **Trend tracking** — skill demand over time from accumulated snapshots — _why leaf: time-series groupby_  (needs weeks of data)  _→ Absorbed by step 27 (M6, decided 2026-11-11): written once in SQL; the dashboard only reads it._
     - [ ] **Streamlit dashboard** — interactive filters + trend charts — _why leaf: UI build_  (needs trend data)
   - M6 — SQL depth (DuckDB)
-    - [ ] **Snapshot + DuckDB setup** — copy a closed `jobs.db`, attach it in DuckDB, reconcile row counts against the source
+    - [x] **Snapshot + DuckDB setup** — copy a closed `jobs.db`, attach it in DuckDB, reconcile row counts against the source  ✅ DuckDB 2.0.0 pinned. Snapshot `data/snapshots/jobs_2026-11-10.db` (byte-identical copy, read-only, gitignored). `jobskills/sql_runner.py` attaches it `READ_ONLY` + `USE`, so `sql/*.sql` use bare table names. `sql/01_row_counts.sql` reconciles **18/18 counts** against `jobs.db` via `sqlite3` in `notebooks/05_sql.ipynb`: 7,182 jobs, 5,482 skill_hits, 12 fetched dates and 4 regions each summing to 7,182. The source side is cut at `fetched_at < '2026-11-11'`, so the check survives later weekly runs. Fixture `tests/fixtures/seed.sql` + `conftest.py`; 40 tests pass. _Findings for later steps: every date column is ISO text, all `+00:00`, so text sort = time sort; `fetched_at` is the FIRST fetch, so per-date counts mean new postings, not scrape size; the 72 regionless rows are `NULL`, labelled `(none)`. First DuckDB `ATTACH` downloads the sqlite extension (needs network once). Bare `pytest` fails to import `jobskills` (pre-existing); use `python -m pytest` as CI does._
     - [ ] **Data-quality audit in SQL** — `dedup_key` duplicates, salary coverage, remote mostly `unknown`, scrape-gap calendar  (needs snapshot)
     - [ ] **Business question** — Swiss vs DE/ES skill demand via conditional aggregation + ranking  (needs audit). _Differs from step 12: compares countries, not roles, and in SQL, not pandas._
     - [ ] **Posting lifetime section** — `first_seen`/`last_seen`, gaps and islands over scrape weeks; missed scrapes (none 30 Jun–9 Sep, thin weeks like 28 Sep) are the main caveat  (needs audit). _Overlaps step 22: trend tracking could be done here in SQL and only displayed by the dashboard._
     - [ ] **SQL write-up** — README section: question, data, cleaning, result, how to run, limits
-    - [ ] **Defend** — be able to explain every query and judgement call cold
+    - [ ] **Defend** — be able to explain every query and judgement call cold  _Postponed until after the SQL lessons (decided 2026-11-11); M6 ships after step 28._
 
 ## Implementation decisions (per-step, from learn-while-building)
 
@@ -126,6 +126,12 @@
 - **Buckets** → full-time vs part-time for the headline; unknown/contract/freelance kept visible in the availability breakdown, not silently dropped.
 - **Deliverable** → `notebooks/04_employment_type.ipynb`, pure notebook; caveat cell leads, not trails.
 
+### Step 24 — Snapshot + DuckDB setup
+- **Snapshot** → plain copy at `data/snapshots/jobs_2026-11-10.db`, `chmod 444`, folder gitignored. _Why: the copy is byte-identical and nothing writes to it; a checksum guard would defend against a risk that barely exists. Not converted to `.duckdb` — reading SQLite directly is part of the DuckDB case (decision 10). Taken before the 16 Nov launchd run touches `jobs.db`._
+- **Attach** → `jobskills/sql_runner.py` attaches a database path (`TYPE sqlite, READ_ONLY`) and runs a `.sql` file; the SQL uses bare table names. _Why: one query file runs unchanged against the snapshot and the test fixture. A views/staging layer waits for step 25, once the audit shows what needs cleaning._
+- **Reconciliation** → totals plus per-scrape-date and per-region counts, compared with `jobs.db` read via `sqlite3`. One query, long format (`dimension | key | n`) via `UNION ALL`. _Why: the breakdowns are the slices steps 25–27 analyse; column-level null checks would duplicate step 25's audit._
+- **Test fixture** → `tests/fixtures/seed.sql` (hand-made DDL + inserts) loaded by `conftest.py` into in-memory DuckDB. _Why: test data stays readable as SQL and grows per step; the attach path is already proven by the reconciliation on the real file._
+
 ## Next up
 _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 
@@ -153,14 +159,14 @@ _Ordered by dependency; tracer-bullet first. Milestone ship-points marked._
 19. [ ] Repo hygiene  ← **M4 ships: portfolio-ready**
 20. [x] Incremental run mode  ← upsert on `id` + `first_seen`/`last_seen`; first tests in the repo
 21. [x] Scheduling  ← launchd, Mondays 09:00; verified in launchd's own environment
-22. [ ] Trend tracking
+22. [ ] Trend tracking  ← absorbed by step 27
 23. [ ] Streamlit dashboard  ← **M5 ships: Phase-B monitoring**
-24. [ ] Snapshot + DuckDB setup
+24. [x] Snapshot + DuckDB setup  ← DuckDB over a frozen 2026-11-10 snapshot; 18/18 counts reconcile
 25. [ ] Data-quality audit in SQL
 26. [ ] Business question: Swiss vs DE/ES skill demand
 27. [ ] Posting lifetime section
-28. [ ] SQL write-up
-29. [ ] Defend  ← **M6 ships: SQL depth project**
+28. [ ] SQL write-up  ← **M6 ships: SQL depth project**
+29. [ ] Defend  ← after the SQL lessons
 
 _Optional remote-board sources (post-M2, add volume — not required to ship M2):_
 - [x] RemoteOK fetcher + mapper _(JSON whole-feed; employment type only in `tags`; client-side role filter)_  ← 3 postings on the first live run
